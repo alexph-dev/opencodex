@@ -19,22 +19,25 @@ if [[ "$(uname -s)" != "Darwin" ]]; then
 fi
 
 mkdir -p "$output_root"
-output_root="$(cd "$output_root" && pwd)"
+# `cd … && pwd` keeps LOGICAL paths on macOS, so a symlink inside the repository that
+# points elsewhere would satisfy the prefix check below and then be deleted for real.
+# Resolve physically before validating.
+output_root="$(cd "$output_root" && pwd -P)"
 app_bundle="$output_root/OpenCodex.app"
 
 # The build deletes whatever sits at $app_bundle, so the destination must be somewhere
 # this project owns. Comparing $app_bundle against $output_root proves nothing — both
 # come from the same variable, so pointing OUTPUT_DIR at /Applications would have passed
 # and then recursively removed a real app.
-allowed_root="$repo_root"
+allowed_root="$(cd "$repo_root" && pwd -P)"
 if [[ -n "${TMPDIR:-}" ]]; then
-  allowed_tmp="$(cd "${TMPDIR%/}" 2>/dev/null && pwd || echo "")"
+  allowed_tmp="$(cd "${TMPDIR%/}" 2>/dev/null && pwd -P || echo "")"
 else
   allowed_tmp=""
 fi
 case "$output_root" in
   "$allowed_root"/*) ;;
-  /tmp/*|/private/tmp/*) ;;
+  /private/tmp/*|/tmp/*) ;;
   *)
     if [[ -z "$allowed_tmp" || "$output_root" != "$allowed_tmp"/* ]]; then
       echo "Refusing to build into '$output_root': it is outside the repository and the" >&2
@@ -86,25 +89,38 @@ if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
   exit 1
 fi
 
-# CFBundleShortVersionString is the human-facing version and may carry a prerelease
-# suffix. CFBundleVersion may NOT: Apple restricts it to period-separated integers, so
-# writing "2.7.36-preview.1" there produces invalid metadata on every preview build.
-# Strip to the numeric core, and let CI append a monotonic build number when it has one.
+# Apple constrains BOTH version fields, and differently from the npm version string:
+#
+#   CFBundleShortVersionString - three period-separated integers. A prerelease suffix
+#                                like "-preview.1" is not valid here.
+#   CFBundleVersion            - ONE TO THREE period-separated integers. A fourth
+#                                component is ignored, so appending a build number to a
+#                                full semver produces no additional identity at all.
+#
+# So the short version is the numeric core, and when CI supplies a run number it becomes
+# the CFBundleVersion outright — a monotonically increasing single integer is both valid
+# and genuinely distinguishing, which "2.7.36.<run>" would not have been.
 version_core="${version%%-*}"
-build_version="$version_core"
+if [[ ! "$version_core" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+  echo "Version core must be three integers for CFBundleShortVersionString: '$version_core'" >&2
+  exit 1
+fi
+
 if [[ -n "${MACOS_BUILD_NUMBER:-}" ]]; then
   if [[ ! "$MACOS_BUILD_NUMBER" =~ ^[0-9]+$ ]]; then
     echo "MACOS_BUILD_NUMBER must be a positive integer, got '$MACOS_BUILD_NUMBER'" >&2
     exit 1
   fi
-  build_version="$version_core.$MACOS_BUILD_NUMBER"
+  build_version="$MACOS_BUILD_NUMBER"
+else
+  build_version="$version_core"
 fi
-if [[ ! "$build_version" =~ ^[0-9]+(\.[0-9]+)*$ ]]; then
-  echo "Computed CFBundleVersion is not period-separated integers: '$build_version'" >&2
+if [[ ! "$build_version" =~ ^[0-9]+(\.[0-9]+){0,2}$ ]]; then
+  echo "CFBundleVersion must be one to three integers, got '$build_version'" >&2
   exit 1
 fi
 
-plutil -replace CFBundleShortVersionString -string "$version" "$staged_app/Contents/Info.plist"
+plutil -replace CFBundleShortVersionString -string "$version_core" "$staged_app/Contents/Info.plist"
 plutil -replace CFBundleVersion            -string "$build_version" "$staged_app/Contents/Info.plist"
 
 # Icon: reuse the dashboard favicon rather than adding another binary asset to the repo.
@@ -124,14 +140,18 @@ iconutil -c icns "$iconset" -o "$staged_app/Contents/Resources/OpenCodex.icns"
 
 # Signing.
 #
-# MACOS_SIGN_IDENTITY selects a Developer ID Application certificate and enables the
-# hardened runtime, which is what notarization requires. Without it the bundle is
-# ad-hoc signed: structurally valid, but `spctl --assess` rejects it and a downloaded
-# copy shows the "cannot be opened because the developer cannot be verified" dialog.
+# MACOS_SIGN_IDENTITY selects a Developer ID Application certificate already present in
+# the caller's keychain and enables the hardened runtime, which is what notarization
+# requires. It is a LOCAL hook: CI does not set it, because an identity name alone
+# cannot sign on a hosted runner — nothing imports the certificate and private key, so
+# codesign fails with "no identity found". Wiring CI signing properly means a protected
+# P12 import, a temporary keychain, notarytool credentials, and stapling.
 #
-# The project has no Developer ID certificate today (that needs a paid Apple Developer
-# account), so ad-hoc is the shipped default and the docs must tell users the
-# right-click-Open path rather than pretend the download runs cleanly.
+# Without it the bundle is ad-hoc signed: structurally valid, but `spctl --assess`
+# rejects it and a downloaded copy shows "cannot be opened because the developer cannot
+# be verified". The project has no Developer ID certificate today, so ad-hoc is what
+# ships and the docs must carry the right-click-Open path rather than pretend
+# otherwise.
 if [[ -n "${MACOS_SIGN_IDENTITY:-}" ]]; then
   codesign --force --deep --options runtime --timestamp \
     --sign "$MACOS_SIGN_IDENTITY" "$staged_app"
@@ -142,8 +162,12 @@ else
   echo "    right-click-Open path on first launch." >&2
 fi
 
+if [[ -L "$app_bundle" ]]; then
+  echo "Refusing to replace '$app_bundle': it is a symlink." >&2
+  exit 1
+fi
 rm -rf "$app_bundle"
 mv "$staged_app" "$app_bundle"
 
-echo "==> Built $app_bundle (version $version, build $build_version)"
+echo "==> Built $app_bundle (release $version, short $version_core, build $build_version)"
 lipo -archs "$app_bundle/Contents/MacOS/OpenCodexMenuBar"

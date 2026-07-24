@@ -101,8 +101,14 @@ cp "$package_dir/Info.plist" "$staged_app/Contents/Info.plist"
 
 # Version comes from package.json — the app can never claim a version the release did not ship.
 version="$(sed -n 's/^[[:space:]]*"version": "\([^"]*\)",/\1/p' "$repo_root/package.json" | head -n 1)"
-plutil -replace CFBundleShortVersionString -string "$version" "$staged_app/Contents/Info.plist"
-plutil -replace CFBundleVersion            -string "$version" "$staged_app/Contents/Info.plist"
+# Apple constrains both fields, and differently from the npm version string:
+#   CFBundleShortVersionString - exactly three integers (no prerelease suffix)
+#   CFBundleVersion            - ONE TO THREE integers; a fourth is ignored, so
+#                                appending a run number to a full semver adds nothing
+version_core="${version%%-*}"
+build_version="${MACOS_BUILD_NUMBER:-$version_core}"
+plutil -replace CFBundleShortVersionString -string "$version_core"   "$staged_app/Contents/Info.plist"
+plutil -replace CFBundleVersion            -string "$build_version" "$staged_app/Contents/Info.plist"
 
 # Icon: reuse the existing dashboard favicon, no new binary asset in the repo.
 icon_source="$repo_root/gui/public/favicon.png"
@@ -338,9 +344,12 @@ So the scripts are built to be honest about it and ready for the day that change
 - `package-macos-release.sh` runs `spctl --assess` and reports the verdict. An ad-hoc
   rejection is expected and non-fatal; a build that claimed a real identity and *still*
   fails assessment exits non-zero, because that means notarization is missing.
-- `release.yml` passes `MACOS_SIGN_IDENTITY` from secrets, so adding the certificate is
-  a configuration change rather than a code change. Adding those secrets is a
-  security-reviewed change of its own.
+- `release.yml` deliberately does **not** pass `MACOS_SIGN_IDENTITY`. An identity name
+  alone cannot sign on a hosted runner: nothing imports the certificate and private key,
+  so `codesign` fails with "no identity found". Advertising the secret would imply a
+  capability that does not exist. Real CI signing means a protected P12 import, a
+  temporary keychain, `notarytool` credentials, and stapling — one security-reviewed
+  change, not a lone secret.
 
 **Consequence for Phase 5 docs:** the Gatekeeper section is not optional. Users will see
 "cannot be opened because the developer cannot be verified" and need the right-click →

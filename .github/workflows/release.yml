@@ -92,11 +92,13 @@ jobs:
           # Apple does not accept in that field, so the script uses the numeric core
           # plus this run number.
           MACOS_BUILD_NUMBER: ${{ github.run_number }}
-          # Optional. When a Developer ID certificate is configured in the repository,
-          # the build signs with the hardened runtime instead of ad-hoc. Until then the
-          # asset is ad-hoc signed and the docs describe the Gatekeeper first-launch
-          # path. Adding these secrets is a security-reviewed change of its own.
-          MACOS_SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
+          # NOTE: intentionally no MACOS_SIGN_IDENTITY here. The build script honours
+          # it, but an identity NAME alone cannot sign on a hosted runner — the
+          # certificate and private key are never imported into a keychain, so codesign
+          # fails with "no identity found". Real Developer ID signing needs a protected
+          # P12 import, a temporary keychain, notarytool credentials, and stapling, all
+          # as one security-reviewed change. Until then the asset is ad-hoc signed and
+          # the docs carry the Gatekeeper first-launch path.
         run: bash scripts/package-macos-release.sh
 
       - name: Upload the release asset
