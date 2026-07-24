@@ -6,19 +6,27 @@ import Foundation
 /// is a convenience, not a redirection mechanism.
 public struct ProxyEndpoint: Equatable, Sendable {
     public static let loopbackHost = "127.0.0.1"
+    public static let validPorts = 1...65535
 
     public let host: String
     public let port: Int
+    private let resolvedURL: URL
 
-    public init(port: Int) {
+    /// Fails rather than traps on an out-of-range port. `baseURL` is built once here, so
+    /// no accessor can crash later on a value that was never a valid URL.
+    public init?(port: Int) {
+        guard Self.validPorts.contains(port),
+              let url = URL(string: "http://\(Self.loopbackHost):\(port)")
+        else { return nil }
         self.host = Self.loopbackHost
         self.port = port
+        self.resolvedURL = url
     }
 
-    public var baseURL: URL {
-        // Safe: host is a fixed literal and port is range-checked at construction sites.
-        URL(string: "http://\(host):\(port)")!
-    }
+    /// The default endpoint, which is known-valid by construction.
+    public static let `default` = ProxyEndpoint(port: ProxyDiscovery.defaultPort)!
+
+    public var baseURL: URL { resolvedURL }
 
     public var display: String { "\(host):\(port)" }
 }
@@ -32,7 +40,7 @@ struct RuntimePortRecord: Decodable {
 /// `src/config.ts`.
 public enum ProxyDiscovery {
     public static let defaultPort = 10100
-    public static let validPorts = 1...65535
+    public static var validPorts: ClosedRange<Int> { ProxyEndpoint.validPorts }
 
     /// `OPENCODEX_HOME` when set and non-empty, else `~/.opencodex`.
     public static func configDirectory(
@@ -56,11 +64,11 @@ public enum ProxyDiscovery {
         guard
             let data = try? Data(contentsOf: file),
             let record = try? JSONDecoder().decode(RuntimePortRecord.self, from: data),
-            validPorts.contains(record.port)
+            let endpoint = ProxyEndpoint(port: record.port)
         else {
-            return ProxyEndpoint(port: defaultPort)
+            return .default
         }
-        return ProxyEndpoint(port: record.port)
+        return endpoint
     }
 
     public static func resolve(

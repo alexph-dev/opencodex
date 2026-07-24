@@ -78,12 +78,28 @@ public enum Format {
             (1_000_000, "M"),
             (1_000, "K"),
         ]
-        for unit in units where value >= unit.threshold {
-            let scaled = value / unit.threshold
-            // 3 significant figures: 36.5B, 1.20M, 232K.
-            let decimals = scaled >= 100 ? 0 : (scaled >= 10 ? 1 : 2)
-            return String(format: "%.\(decimals)f%@", scaled, unit.suffix)
+        // Ascending, so promotion is a simple step to the next entry.
+        let ascending = units.reversed().map { $0 }
+
+        for (index, unit) in ascending.enumerated() where value < (unit.threshold * 1000) {
+            let rendered = render(value / unit.threshold, suffix: unit.suffix)
+            // Rounding can push a value across its own boundary: 999_999 scales to
+            // 999.999K, which would render "1000K" instead of promoting to "1.00M".
+            guard rendered.hasPrefix("1000"), index + 1 < ascending.count else { return rendered }
+            let larger = ascending[index + 1]
+            return render(value / larger.threshold, suffix: larger.suffix)
+        }
+
+        // Beyond the largest unit, stay in that unit rather than inventing a suffix.
+        if let largest = ascending.last, value >= largest.threshold {
+            return render(value / largest.threshold, suffix: largest.suffix)
         }
         return String(format: "%.0f", value)
+    }
+
+    /// 3 significant figures: 36.5B, 1.20M, 233K.
+    private static func render(_ scaled: Double, suffix: String) -> String {
+        let decimals = scaled >= 100 ? 0 : (scaled >= 10 ? 1 : 2)
+        return String(format: "%.\(decimals)f%@", scaled, suffix)
     }
 }

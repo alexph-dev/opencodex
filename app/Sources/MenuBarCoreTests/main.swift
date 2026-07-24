@@ -8,5 +8,6 @@ let runner = TestRunner()
 DiscoverySuite.run(runner)
 ModelDecodingSuite.run(runner)
 FormattingSuite.run(runner)
+TransportSuite.run(runner)
 
 exit(runner.summarize())

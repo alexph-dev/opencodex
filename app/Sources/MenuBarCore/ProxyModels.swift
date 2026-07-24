@@ -127,8 +127,15 @@ public struct UsageReport: Decodable, Equatable, Sendable {
     }
 
     public var isEmpty: Bool {
-        guard let summary else { return true }
-        return (summary.requests ?? 0) == 0
+        isEmptyOrUnknown == true
+    }
+
+    /// Three states, not two: `nil` means the proxy did not report a request count, and
+    /// `true` means it explicitly reported zero. Collapsing those would let the UI print
+    /// "No requests" for data it simply does not have.
+    public var isEmptyOrUnknown: Bool? {
+        guard let requests = summary?.requests else { return nil }
+        return requests == 0
     }
 }
 
@@ -141,8 +148,10 @@ public struct QuotaWindow: Decodable, Equatable, Sendable {
 public struct ProviderQuota: Decodable, Equatable, Sendable {
     public let weeklyPercent: Double?
     public let monthlyPercent: Double?
+    public let fiveHourPercent: Double?
     public let weeklyResetAt: Double?
     public let monthlyResetAt: Double?
+    public let fiveHourResetAt: Double?
     public let customWindows: [QuotaWindow]?
     public let updatedAt: Double?
 }
@@ -177,27 +186,52 @@ public extension QuotaReport {
         return Date(timeIntervalSince1970: seconds)
     }
 
+    /// Every window the provider reported, in display order.
+    ///
+    /// The live proxy is not uniform: `openai` and `xai` report a single named window,
+    /// `kimi` reports both `weeklyPercent` and `fiveHourPercent`, and `cursor` and
+    /// `google-antigravity` carry two `customWindows` each. Returning only one window
+    /// would silently hide real quota pressure.
+    func normalizedWindows() -> [NormalizedQuota] {
+        let name = label ?? provider
+        var windows: [NormalizedQuota] = []
+
+        func append(_ percent: Double?, _ windowLabel: String, _ resetAt: Double?) {
+            guard percent != nil || resetAt != nil else { return }
+            windows.append(NormalizedQuota(
+                provider: provider, providerLabel: name, percent: percent,
+                windowLabel: windowLabel, resetAt: Self.date(from: resetAt)
+            ))
+        }
+
+        append(quota?.fiveHourPercent, "5h", quota?.fiveHourResetAt)
+        append(quota?.weeklyPercent, "week", quota?.weeklyResetAt)
+        append(quota?.monthlyPercent, "month", quota?.monthlyResetAt)
+
+        for window in quota?.customWindows ?? [] {
+            append(window.percent, window.label ?? "window", window.resetAt)
+        }
+
+        return windows
+    }
+
+    /// The single window that best represents overall pressure, for the compact row.
+    ///
+    /// Precedence is longest-horizon-first (month, then week, then shorter windows):
+    /// a monthly cap is the one that actually stops work, while a 5h window recovers on
+    /// its own. Providers with no numeric window normalize to a nil percent so the UI
+    /// renders an em dash rather than a misleading zero.
     func normalized() -> NormalizedQuota {
         let name = label ?? provider
-        if let percent = quota?.weeklyPercent {
-            return NormalizedQuota(
-                provider: provider, providerLabel: name, percent: percent,
-                windowLabel: "week", resetAt: Self.date(from: quota?.weeklyResetAt)
-            )
-        }
-        if let percent = quota?.monthlyPercent {
-            return NormalizedQuota(
-                provider: provider, providerLabel: name, percent: percent,
-                windowLabel: "month", resetAt: Self.date(from: quota?.monthlyResetAt)
-            )
-        }
-        if let window = quota?.customWindows?.first {
-            return NormalizedQuota(
-                provider: provider, providerLabel: name, percent: window.percent,
-                windowLabel: window.label ?? "window", resetAt: Self.date(from: window.resetAt)
-            )
-        }
-        return NormalizedQuota(
+        let windows = normalizedWindows()
+
+        let preferred =
+            windows.first { $0.windowLabel == "month" && $0.hasPercent }
+            ?? windows.first { $0.windowLabel == "week" && $0.hasPercent }
+            ?? windows.first { $0.hasPercent }
+            ?? windows.first
+
+        return preferred ?? NormalizedQuota(
             provider: provider, providerLabel: name, percent: nil,
             windowLabel: "—", resetAt: nil
         )

@@ -7,6 +7,8 @@ public enum ProxyError: Error, Equatable {
     case unauthorized
     case http(Int)
     case decoding
+    /// A transport failure that is not evidence the proxy is down (TLS, policy, DNS).
+    case transport
 
     /// Human sentences only. Response bodies can echo configuration values, so they
     /// never reach the UI or a log.
@@ -16,8 +18,20 @@ public enum ProxyError: Error, Equatable {
         case .unauthorized: return "This proxy requires an API key."
         case .http(let code): return "The proxy returned an unexpected status (\(code))."
         case .decoding: return "The proxy returned a response this app could not read."
+        case .transport: return "The connection to the proxy failed."
         }
     }
+}
+
+/// Supplies the optional management API key. Injected so tests never touch the real
+/// Keychain and so the app can swap the source without touching transport code.
+public protocol CredentialStore: Sendable {
+    func loadAPIKey() -> String?
+}
+
+public struct KeychainCredentialStore: CredentialStore {
+    public init() {}
+    public func loadAPIKey() -> String? { Keychain.read() }
 }
 
 /// HTTP client for the OpenCodex management API.
@@ -27,11 +41,19 @@ public enum ProxyError: Error, Equatable {
 /// convention.
 public actor ProxyClient {
     private let session: URLSession
+    private let credentials: CredentialStore
     private var endpoint: ProxyEndpoint
     private var apiKey: String?
+    /// Ensures the lazy credential load happens at most once per client.
+    private var didAttemptCredentialLoad = false
 
-    public init(endpoint: ProxyEndpoint, session: URLSession? = nil) {
+    public init(
+        endpoint: ProxyEndpoint,
+        session: URLSession? = nil,
+        credentials: CredentialStore = KeychainCredentialStore()
+    ) {
         self.endpoint = endpoint
+        self.credentials = credentials
         if let session {
             self.session = session
         } else {
@@ -46,7 +68,11 @@ public actor ProxyClient {
 
     public func updateEndpoint(_ endpoint: ProxyEndpoint) { self.endpoint = endpoint }
 
-    public func setAPIKey(_ key: String?) { self.apiKey = key }
+    public func setAPIKey(_ key: String?) {
+        self.apiKey = key
+        // An explicitly supplied key replaces the lazy path entirely.
+        self.didAttemptCredentialLoad = true
+    }
 
     // MARK: - Reads
 
@@ -118,6 +144,28 @@ public actor ProxyClient {
         query: [URLQueryItem] = [],
         body: Body?
     ) async throws -> Data {
+        do {
+            return try await perform(method: method, path: path, query: query, body: body)
+        } catch ProxyError.unauthorized {
+            // A loopback proxy needs no credential, so a 401 means this install is bound
+            // to a non-loopback host. Load the stored key once and retry exactly once —
+            // never a loop, so a stale key cannot spin.
+            guard !didAttemptCredentialLoad else { throw ProxyError.unauthorized }
+            didAttemptCredentialLoad = true
+            guard let stored = credentials.loadAPIKey(), !stored.isEmpty else {
+                throw ProxyError.unauthorized
+            }
+            apiKey = stored
+            return try await perform(method: method, path: path, query: query, body: body)
+        }
+    }
+
+    private func perform<Body: Encodable>(
+        method: String,
+        path: String,
+        query: [URLQueryItem],
+        body: Body?
+    ) async throws -> Data {
         guard var components = URLComponents(
             url: endpoint.baseURL.appendingPathComponent(path),
             resolvingAgainstBaseURL: false
@@ -146,11 +194,15 @@ public actor ProxyClient {
             throw error
         } catch let error as URLError {
             switch error.code {
+            case .cancelled:
+                // Propagate cancellation rather than reporting a stopped proxy: the
+                // polling coordinator cancels in-flight work whenever the popover closes.
+                throw CancellationError()
             case .cannotConnectToHost, .timedOut, .networkConnectionLost,
                  .cannotFindHost, .notConnectedToInternet:
                 throw ProxyError.unreachable
             default:
-                throw ProxyError.unreachable
+                throw ProxyError.transport
             }
         }
     }

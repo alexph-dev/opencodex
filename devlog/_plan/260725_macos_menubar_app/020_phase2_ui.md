@@ -30,7 +30,7 @@ Implements the locked direction in `003`. Dials: `DESIGN_VARIANCE 2`,
 | `app/Sources/MenuBarApp/Theme.swift` | NEW |
 | `app/Sources/MenuBarCore/ProxySnapshot.swift` | NEW |
 | `app/Sources/MenuBarCore/PollingCoordinator.swift` | NEW |
-| `app/Tests/MenuBarCoreTests/SnapshotStateTests.swift` | NEW |
+| `app/Sources/MenuBarCoreTests/SnapshotStateSuite.swift` | NEW |
 
 **AppKit, not SwiftUI.** SwiftUI in an `NSPopover` still fights sizing and first-responder
 behaviour, and this layout is a fixed-width column of rows — precisely what AppKit stack
@@ -297,4 +297,4 @@ what the screenshot shows, then re-verify. Code review alone does not close this
 7. Sparkline bar count equals `days.count`, not a hardcoded 24.
 8. Each empty state above renders its defined copy, distinct from `loading`.
 9. `swift run --package-path app OpenCodexMenuBar` shows the menu bar item and popover.
-10. `swift test --package-path app` green.
+10. `swift run --package-path app MenuBarCoreTests` green (see `010` build-time amendment).

@@ -16,7 +16,7 @@ routes inventoried in `002` §4.
 | `app/Sources/MenuBarApp/Views/ActionBarView.swift` | MODIFY — wire Stop proxy |
 | `app/Sources/MenuBarApp/Views/ProviderListView.swift` | NEW — disclosure + toggles |
 | `app/Sources/MenuBarApp/Views/ConfirmSheet.swift` | NEW |
-| `app/Tests/MenuBarCoreTests/ActionTests.swift` | NEW |
+| `app/Sources/MenuBarCoreTests/ActionSuite.swift` | NEW |
 
 ## `ProxyClient` additions
 
@@ -172,4 +172,4 @@ Stubbed `URLProtocol`:
 3. The default provider's toggle is inert and explains why, using `/api/config`.
 4. Failure paths surface a human sentence, never a raw body.
 5. No `Process` / `NSTask` usage anywhere in `app/`.
-6. `swift test --package-path app` green.
+6. `swift run --package-path app MenuBarCoreTests` green.

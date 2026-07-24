@@ -142,7 +142,7 @@ catches the case where the archive is produced but empty.
 ```json
 "build:macos":   "bash scripts/build-macos-app.sh",
 "package:macos": "bash scripts/package-macos-release.sh",
-"test:macos":    "swift test --package-path app"
+"test:macos":    "swift run --package-path app MenuBarCoreTests"
 ```
 
 ## `.github/workflows/ci.yml`

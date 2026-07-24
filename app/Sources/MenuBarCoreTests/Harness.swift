@@ -27,13 +27,19 @@ public final class TestRunner {
 
     public func test(_ name: String, _ body: () throws -> Void) {
         current = name
+        let failuresBefore = failures.count
         do {
             try body()
-            passed += 1
-            print("ok — \(name)")
         } catch {
             failures.append(TestFailure(test: name, message: "threw \(error)", file: #file, line: #line))
             print("FAIL — \(name): threw \(error)")
+            return
+        }
+        // A case that recorded an expectation failure is not a pass, even though its
+        // body returned normally.
+        if failures.count == failuresBefore {
+            passed += 1
+            print("ok — \(name)")
         }
     }
 

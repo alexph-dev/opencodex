@@ -5,18 +5,29 @@ import Security
 ///
 /// The key is read lazily — only after a 401 — and is never written to UserDefaults,
 /// never logged, and never included in an error surfaced to the UI.
+///
+/// Every query sets `kSecUseDataProtectionKeychain`. Without it, `kSecAttrAccessible` is
+/// ignored on macOS (it applies only to data-protection or synchronizable items), so the
+/// declared accessibility class would be decorative. Setting it on *all* operations also
+/// matters for correctness: a data-protection item is invisible to a query that omits
+/// the flag, so a mixed set of queries would fail to find or delete its own items.
 public enum Keychain {
     public static let service = "com.opencodex.menubar.apikey"
     public static let defaultAccount = "default"
 
-    public static func read(account: String = defaultAccount) -> String? {
-        let query: [String: Any] = [
+    private static func baseQuery(account: String) -> [String: Any] {
+        [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: account,
-            kSecReturnData as String: true,
-            kSecMatchLimit as String: kSecMatchLimitOne,
+            kSecUseDataProtectionKeychain as String: true,
         ]
+    }
+
+    public static func read(account: String = defaultAccount) -> String? {
+        var query = baseQuery(account: account)
+        query[kSecReturnData as String] = true
+        query[kSecMatchLimit as String] = kSecMatchLimitOne
         var item: CFTypeRef?
         guard SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess,
               let data = item as? Data,
@@ -28,25 +39,28 @@ public enum Keychain {
 
     @discardableResult
     public static func write(_ value: String, account: String = defaultAccount) -> Bool {
-        delete(account: account)
-        let attributes: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account,
-            kSecValueData as String: Data(value.utf8),
-            kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlock,
-        ]
+        let data = Data(value.utf8)
+
+        // Update first, add only when absent. Deleting first would destroy a working key
+        // whenever the subsequent add failed.
+        let updateStatus = SecItemUpdate(
+            baseQuery(account: account) as CFDictionary,
+            [kSecValueData as String: data] as CFDictionary
+        )
+        if updateStatus == errSecSuccess { return true }
+        guard updateStatus == errSecItemNotFound else { return false }
+
+        var attributes = baseQuery(account: account)
+        attributes[kSecValueData as String] = data
+        // ThisDeviceOnly: the key is a local proxy credential with no reason to migrate
+        // to another machine via backup or transfer.
+        attributes[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
         return SecItemAdd(attributes as CFDictionary, nil) == errSecSuccess
     }
 
     @discardableResult
     public static func delete(account: String = defaultAccount) -> Bool {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account,
-        ]
-        let status = SecItemDelete(query as CFDictionary)
+        let status = SecItemDelete(baseQuery(account: account) as CFDictionary)
         return status == errSecSuccess || status == errSecItemNotFound
     }
 }

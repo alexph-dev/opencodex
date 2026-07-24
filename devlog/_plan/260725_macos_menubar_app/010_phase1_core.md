@@ -1,7 +1,7 @@
 # 010 — Phase 1: app skeleton, proxy discovery, management API client
 
 **Depends on:** nothing (foundation phase).
-**Independently verifiable by:** `swift test --package-path app` green and
+**Independently verifiable by:** `swift run --package-path app MenuBarCoreTests` green and
 `swift build --package-path app -c release --arch arm64` succeeding.
 
 **Bundle scope note (audit correction):** an earlier draft closed this phase on a
@@ -413,6 +413,27 @@ DerivedData/
 Root `.gitignore` gains `dist/macos/`. This is the direct lesson from PR #421's committed
 `src-tauri/target/` — the ignore rules land in the same commit as the first build script,
 never afterwards.
+
+## Code-review corrections (round 1, folded before B closed)
+
+An adversarial review of the first implementation returned FAIL on 10 findings. Each was
+verified against the live proxy or Apple documentation before being folded:
+
+| Finding | Correction |
+| --- | --- |
+| ATS blocks loopback IP loads on macOS 14+, so the *packaged* app could not reach the proxy at all while `swift run` stayed green | `Info.plist` gains `NSAppTransportSecurity` / `NSAllowsLocalNetworking` |
+| The lazy Keychain retry after 401 was never wired; `Keychain` was dead production code | `CredentialStore` protocol injected into `ProxyClient`; one load, exactly one retry, no loop |
+| `kSecAttrAccessible` is ignored on macOS without `kSecUseDataProtectionKeychain` | Flag set on every query; class tightened to `…ThisDeviceOnly`; `write` now updates-then-adds so a failed add cannot destroy a valid key |
+| Live `kimi` reports `fiveHourPercent`/`fiveHourResetAt`; `cursor` and `google-antigravity` each carry two `customWindows`. `normalized()` discarded all but one | Added the five-hour fields and `normalizedWindows()` returning every window; `normalized()` keeps an explicit longest-horizon precedence for the compact row |
+| `(requests ?? 0) == 0` turned unknown into "no usage" | `isEmptyOrUnknown: Bool?` preserves three states |
+| Every non-connectivity `URLError` — including `.cancelled` — mapped to `.unreachable` | `.cancelled` propagates as `CancellationError`; other failures map to a new `.transport` case |
+| `ProxyEndpoint.baseURL` force-unwrapped a URL the initializer never validated | Failable initializer; the URL is built once and stored |
+| Rounding produced `1000K` instead of promoting to `1.00M` | Promotion on rollover, with boundary tests at, below, and above every unit |
+| No tests covered transport, auth, or privacy | `TransportSuite`: 14 cases over status mapping, 401 retry, cancellation, request shape, and body redaction |
+| The executable-test amendment was not propagated | `020`, `030`, `040` now all reference `swift run --package-path app MenuBarCoreTests` |
+
+Live re-verification after the fixes covered all six providers, including Kimi's 5h+week
+pair and Cursor's three windows.
 
 ## Accept criteria
 

@@ -107,6 +107,15 @@ enum ModelDecodingSuite {
         t.test("usage: zero requests reads as empty") {
             let report = try decode(UsageReport.self, #"{"range":"7d","summary":{"requests":0}}"#)
             t.equal(report.isEmpty, true)
+            t.equal(report.isEmptyOrUnknown, true)
+        }
+
+        // Unknown and zero are different facts: an omitted count must not render as
+        // "No requests".
+        t.test("usage: an omitted request count is unknown, not empty") {
+            let report = try decode(UsageReport.self, #"{"range":"7d","summary":{"totalTokens":5}}"#)
+            t.isNil(report.isEmptyOrUnknown, "isEmptyOrUnknown for an omitted count")
+            t.equal(report.isEmpty, false, "isEmpty must not claim empty for unknown")
         }
 
         t.test("usage: the range enum is closed") {
@@ -144,6 +153,49 @@ enum ModelDecodingSuite {
             let normalized = try decode(QuotaReport.self, json).normalized()
             t.equal(normalized.windowLabel, "5h")
             t.equal(normalized.percent, 12)
+        }
+
+        // Live kimi reports weeklyPercent AND fiveHourPercent; live cursor and
+        // google-antigravity each carry two customWindows. Returning one window would
+        // hide real quota pressure.
+        t.test("quotas: kimi exposes both its five-hour and weekly windows") {
+            let json = """
+            {"provider":"kimi","label":"Kimi","quota":{"fiveHourPercent":22,
+             "fiveHourResetAt":1784928599718,"weeklyPercent":61,"weeklyResetAt":1785265199718}}
+            """
+            let report = try decode(QuotaReport.self, json)
+            let windows = report.normalizedWindows()
+            t.equal(windows.count, 2)
+            t.equal(windows.map(\.windowLabel), ["5h", "week"])
+            // The compact row prefers the longer horizon.
+            t.equal(report.normalized().windowLabel, "week")
+            t.equal(report.normalized().percent, 61)
+        }
+
+        t.test("quotas: multiple custom windows are all retained") {
+            let json = """
+            {"provider":"cursor","label":"Cursor","quota":{"monthlyPercent":10,
+             "monthlyResetAt":1785256304000,
+             "customWindows":[{"label":"First-party models","percent":4,"resetAt":1785256304000},
+                              {"label":"API usage","percent":1,"resetAt":1785256304000}]}}
+            """
+            let report = try decode(QuotaReport.self, json)
+            let windows = report.normalizedWindows()
+            t.equal(windows.count, 3)
+            t.equal(windows.map(\.windowLabel), ["month", "First-party models", "API usage"])
+            t.equal(report.normalized().windowLabel, "month")
+        }
+
+        t.test("quotas: a provider with only custom windows still normalizes") {
+            let json = """
+            {"provider":"google-antigravity","label":"Google","quota":{
+             "customWindows":[{"label":"Gem","percent":30,"resetAt":1785256304000},
+                              {"label":"Cla","percent":12,"resetAt":1785256304000}]}}
+            """
+            let report = try decode(QuotaReport.self, json)
+            t.equal(report.normalizedWindows().count, 2)
+            t.equal(report.normalized().windowLabel, "Gem")
+            t.equal(report.normalized().percent, 30)
         }
 
         t.test("quotas: an absent quota normalizes to a nil percent") {
