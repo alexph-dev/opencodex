@@ -23,6 +23,13 @@ enum PollingSuite {
 
     private final class Box<T>: @unchecked Sendable { var value: T? }
 
+    private final class Flag: @unchecked Sendable {
+        private let lock = NSLock()
+        private var flag = false
+        var value: Bool { lock.lock(); defer { lock.unlock() }; return flag }
+        func set() { lock.lock(); flag = true; lock.unlock() }
+    }
+
     private static let healthOK = #"{"status":"protected","serviceInstalled":true,"serviceEnabled":true}"#
     private static let usageOK = #"{"range":"7d","summary":{"requests":10},"days":[{"date":"d","requests":10}]}"#
     private static let quotasOK = #"{"reports":[{"provider":"p","quota":{"weeklyPercent":5}}]}"#
@@ -273,6 +280,62 @@ enum PollingSuite {
             // If it returned early the health read would not have landed yet.
             t.equal(snapshot.state.isRunning, true)
             _ = t.notNil(snapshot.lastUpdated, "lastUpdated after refreshAndWait")
+        }
+
+        // The previous two tests both ran with refreshInFlight == false, so they never
+        // entered waitForCompletion() at all — they would have stayed green if the
+        // continuation never resumed. This one holds a refresh suspended so the
+        // coalescing path is the one under test.
+        t.test("polling: refreshAndWait suspends behind an in-flight cycle and resumes") {
+            StubProtocol.reset(Array(
+                repeating: .init(status: 200, body: healthOK, urlError: nil), count: 20))
+            let gate = DispatchSemaphore(value: 0)
+            StubProtocol.gate = gate
+
+            let coordinator = makeCoordinator()
+            let returned = Flag()
+
+            // Cycle 1 blocks inside the stub.
+            let first = Task { await coordinator.refresh() }
+            Thread.sleep(forTimeInterval: 0.2)
+
+            // Cycle 2 must queue behind it and stay suspended.
+            let waiter = Task {
+                await coordinator.refreshAndWait()
+                returned.set()
+            }
+            Thread.sleep(forTimeInterval: 0.3)
+            t.equal(returned.value, false, "refreshAndWait must not return while a cycle is in flight")
+
+            // Release everything and let the queued cycle finish.
+            StubProtocol.gate = nil
+            for _ in 0..<40 { gate.signal() }
+            sync { _ = await first.value; _ = await waiter.value }
+            t.equal(returned.value, true, "refreshAndWait must resume once the queued cycle publishes")
+        }
+
+        t.test("polling: a waiter is released even when the queued cycle fails") {
+            var responses = Array(repeating: StubProtocol.Response(status: 200, body: healthOK, urlError: nil), count: 3)
+            responses.append(contentsOf: Array(
+                repeating: .init(status: 0, body: "", urlError: .cannotConnectToHost), count: 20))
+            StubProtocol.reset(responses)
+            let gate = DispatchSemaphore(value: 0)
+            StubProtocol.gate = gate
+
+            let coordinator = makeCoordinator()
+            let returned = Flag()
+            let first = Task { await coordinator.refresh() }
+            Thread.sleep(forTimeInterval: 0.2)
+            let waiter = Task {
+                await coordinator.refreshAndWait()
+                returned.set()
+            }
+            Thread.sleep(forTimeInterval: 0.2)
+
+            StubProtocol.gate = nil
+            for _ in 0..<40 { gate.signal() }
+            sync { _ = await first.value; _ = await waiter.value }
+            t.equal(returned.value, true, "a failing queued cycle must still release its waiter")
         }
 
         t.test("polling: refreshAndWait survives a failing cycle without hanging") {

@@ -201,6 +201,17 @@ Stubbed `URLProtocol`:
 
 ## Code-review corrections (folded before B closed)
 
+### Round 4
+
+| Finding | Correction |
+| --- | --- |
+| Both `refreshAndWait` tests ran with `refreshInFlight == false`, so neither entered `waitForCompletion()`. They would have stayed green if the continuation never resumed — no regression proof for the concurrency fix that closed the round-3 blocker | `StubProtocol` gained a request gate. Two new tests hold a cycle suspended, assert the waiter has NOT returned, then release and assert it does — one for a succeeding queued cycle, one for a failing one |
+
+**Sabotage-verified.** A test that passes proves nothing about a path it never takes, so
+the resume line was deliberately removed and the suite re-run: it hung until the 120s
+timeout instead of passing. Restored, it passes in ~2s. That is the evidence the tests
+actually exercise the continuation.
+
 ### Round 3
 
 | Finding | Correction |
