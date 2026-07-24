@@ -63,7 +63,11 @@ public actor ActionCoordinator {
         var sawIndeterminate = false
         while now() < deadline {
             await sleeper(Self.pollInterval)
-            switch await client.liveness() {
+            // Cap the probe to whatever time is left, so the last one cannot overrun the
+            // deadline by its own timeout.
+            let remaining = deadline.timeIntervalSince(now())
+            guard remaining > 0 else { break }
+            switch await client.liveness(timeout: min(1.5, remaining)) {
             case .refused:
                 // The only proof the proxy is actually gone.
                 return restored

@@ -307,6 +307,46 @@ enum ActionSuite {
                 t.expect(false, "expected .failed, got \(outcome)")
             }
         }
+
+        // A 401 already answers "is anything listening". Retrying it through the normal
+        // credential path spent a second full timeout and could downgrade a
+        // known-reachable result to indeterminate if the retry failed.
+        t.test("liveness: a 401 answers immediately without a credential retry") {
+            StubProtocol.reset([
+                .init(status: 401, body: "", urlError: nil),
+                .init(status: 0, body: "", urlError: .timedOut),   // must never be used
+            ])
+            let client = ProxyClient(endpoint: .default, session: makeSession(),
+                                     credentials: StubCredentialsFixed(key: "stored-key"))
+            t.equal(sync { await client.liveness() }, .reachable)
+            t.equal(StubProtocol.recorded.count, 1, "liveness must be a single attempt")
+        }
+
+        t.test("liveness: the probe honours a caller-supplied timeout") {
+            StubProtocol.reset([.init(status: 200, body: #"{"port":10100}"#, urlError: nil)])
+            let client = ProxyClient(endpoint: .default, session: makeSession(), credentials: NoCredentials())
+            _ = sync { await client.liveness(timeout: 0.25) }
+            t.equal(StubProtocol.recorded.first?.timeoutInterval, 0.25)
+        }
+
+        // The final probe must not overrun the stop deadline by its own timeout.
+        t.test("stop: the last probe is capped to the remaining deadline") {
+            var responses: [StubProtocol.Response] = [.init(status: 200, body: "{}", urlError: nil)]
+            responses.append(contentsOf: Array(
+                repeating: .init(status: 200, body: #"{"port":10100}"#, urlError: nil), count: 400))
+            StubProtocol.reset(responses)
+            let clock = FakeClock()
+            _ = sync { await makeCoordinator(clock: clock).stop(startCommand: "ocx start") }
+
+            // Every liveness probe after the POST must request no more than 1.5s, and
+            // the last must be clamped to whatever remained.
+            let probes = StubProtocol.recorded.dropFirst()
+            t.expect(!probes.isEmpty, "expected liveness probes")
+            for probe in probes {
+                t.expect(probe.timeoutInterval <= 1.5,
+                         "probe timeout \(probe.timeoutInterval) exceeds the cap")
+            }
+        }
     }
 
     private struct StubCredentialsFixed: CredentialStore {

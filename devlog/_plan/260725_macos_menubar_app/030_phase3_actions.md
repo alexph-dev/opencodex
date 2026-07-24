@@ -92,8 +92,13 @@ as "stopped" would make the UI lie for several seconds.
 ```swift
 public enum ActionOutcome: Equatable, Sendable {
     case succeeded
-    case failed(String)          // user-facing text, never a raw response body
-    case requiresManualStart     // stop confirmed; the app cannot relaunch it
+    /// Stop confirmed; the app cannot relaunch it, so it carries the start command.
+    case requiresManualStart(String)
+    /// Stopped, but `restoreNativeCodex()` failed — native Codex still points at the
+    /// closing port, so the user must run `ocx restore` too.
+    case stoppedWithRestoreFailure(String)
+    /// User-facing text, never a raw response body.
+    case failed(String)
 }
 
 public func stop(startCommand: String) async -> ActionOutcome {
@@ -195,6 +200,14 @@ Stubbed `URLProtocol`:
 - No error path leaks a response body into `ActionOutcome`.
 
 ## Code-review corrections (folded before B closed)
+
+### Round 3
+
+| Finding | Correction |
+| --- | --- |
+| `liveness()` went through the generic `send()`, so a 401 with a stored key triggered a credential retry — spending a second full timeout re-asking a question the 401 had already answered, and downgrading a known-reachable result to indeterminate if that retry failed | Liveness now calls `perform()` directly: one attempt, no retry |
+| The stop loop always requested a 1.5s probe, so the final one could overrun the 10s deadline | Each probe is capped to `min(1.5, remaining)`, and the loop breaks when no time is left |
+| `refreshAndWait()` spun on shared booleans with a 5s bound, which a legitimately slow cycle can exceed — re-enabling the switch against pre-write data, the exact window it was added to close | Waits on a continuation released when no cycle is running or queued |
 
 ### Round 2
 

@@ -246,6 +246,44 @@ enum PollingSuite {
             t.equal(snapshot.showsData, false, "no data was ever loaded")
             t.isNil(snapshot.dataAge, "dataAge")
         }
+
+        // refresh() coalesces, so a caller that needs authoritative state afterwards
+        // must wait for the cycle that absorbed its request — not just for its own
+        // immediate return.
+        t.test("polling: refreshAndWait returns only after a cycle has published") {
+            // setPopoverOpen already runs a full cycle, so queue enough for both it and
+            // the refreshAndWait that follows; the stub falls back to connection-refused
+            // once drained, which would look like a stopped proxy.
+            StubProtocol.reset([
+                .init(status: 200, body: healthOK, urlError: nil),
+                .init(status: 200, body: providersOK, urlError: nil),
+                .init(status: 200, body: configOK, urlError: nil),
+                .init(status: 200, body: usageOK, urlError: nil),
+                .init(status: 200, body: quotasOK, urlError: nil),
+                .init(status: 200, body: healthOK, urlError: nil),
+                .init(status: 200, body: providersOK, urlError: nil),
+                .init(status: 200, body: configOK, urlError: nil),
+            ])
+            let coordinator = makeCoordinator()
+            let snapshot = sync { () -> ProxySnapshot in
+                await coordinator.setPopoverOpen(true)
+                await coordinator.refreshAndWait()
+                return await coordinator.current
+            }
+            // If it returned early the health read would not have landed yet.
+            t.equal(snapshot.state.isRunning, true)
+            _ = t.notNil(snapshot.lastUpdated, "lastUpdated after refreshAndWait")
+        }
+
+        t.test("polling: refreshAndWait survives a failing cycle without hanging") {
+            StubProtocol.reset([.init(status: 0, body: "", urlError: .cannotConnectToHost)])
+            let coordinator = makeCoordinator()
+            let snapshot = sync { () -> ProxySnapshot in
+                await coordinator.refreshAndWait()
+                return await coordinator.current
+            }
+            t.equal(snapshot.state, .unreachable)
+        }
     }
 
     private struct NoCredentials: CredentialStore {

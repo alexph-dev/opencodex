@@ -1,13 +1,15 @@
 import Foundation
 
 public enum ProxyError: Error, Equatable {
-    /// Connection refused or timed out — the proxy is not running.
+    /// The connection was refused — nothing is listening. This is the only transport
+    /// result that proves the proxy is gone; timeouts get `.inconclusive`.
     case unreachable
     /// 401 — a non-loopback bind that requires a credential.
     case unauthorized
     case http(Int)
     case decoding
-    /// A transport failure that is not evidence the proxy is down (TLS, policy, DNS).
+    /// A transport failure that is not evidence the proxy is down (TLS, policy, and
+    /// other non-connectivity URLSession errors).
     case transport
     /// The request never completed — a timeout or a socket dropped mid-response. This
     /// proves nothing either way, and must not be read as "the proxy is gone".
@@ -113,7 +115,13 @@ public actor ProxyClient {
     /// overrun the stop deadline it is supposed to respect.
     public func liveness(timeout: TimeInterval = 1.5) async -> Liveness {
         do {
-            _ = try await get("api/settings", timeout: timeout) as ProxySettings
+            // Deliberately bypasses `send()`: its 401 credential retry would spend a
+            // second full timeout re-asking a question the 401 already answered, and a
+            // failed retry would downgrade a known-reachable result to indeterminate.
+            _ = try await perform(
+                method: "GET", path: "api/settings", query: [],
+                body: nil as EmptyBody?, timeout: timeout
+            )
             return .reachable
         } catch ProxyError.unauthorized, ProxyError.decoding {
             // Both prove a server answered.

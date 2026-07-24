@@ -24,6 +24,10 @@ public actor PollingCoordinator {
     /// immediately reopening the popover dropped the reopen's refresh entirely: the old
     /// cycle exited on its generation guard and the new one had already been rejected.
     private var pendingOpenRefresh = false
+    /// Continuations waiting for a cycle to publish. Waiting on a real completion signal
+    /// rather than a bounded spin means a slow-but-legitimate refresh cannot be
+    /// abandoned early, which would re-enable a control against pre-write state.
+    private var completionWaiters: [CheckedContinuation<Void, Never>] = []
     /// Attempt time, distinct from success time: a persistently failing endpoint must
     /// not turn its healthy sibling into a 5-second poller.
     private var lastAggregationAttempt: Date?
@@ -84,6 +88,7 @@ public actor PollingCoordinator {
             guard cycle == generation else {
                 refreshInFlight = false
                 await drainPendingRefresh()
+                signalCompletionIfIdle()
                 return
             }
             snapshot.state = .running(health)
@@ -95,16 +100,19 @@ public actor PollingCoordinator {
             // The popover closed mid-flight. Not a proxy failure; leave state untouched.
             refreshInFlight = false
             await drainPendingRefresh()
+            signalCompletionIfIdle()
             return
         } catch let error as ProxyError {
             if cycle == generation { apply(error); publish() }
             refreshInFlight = false
             await drainPendingRefresh()
+            signalCompletionIfIdle()
             return
         } catch {
             if cycle == generation { apply(.transport); publish() }
             refreshInFlight = false
             await drainPendingRefresh()
+            signalCompletionIfIdle()
             return
         }
 
@@ -127,21 +135,37 @@ public actor PollingCoordinator {
         if cycle == generation { publish() }
         refreshInFlight = false
         await drainPendingRefresh()
+        signalCompletionIfIdle()
     }
 
-    /// Refreshes and does not return until a cycle has actually completed.
+    /// Refreshes and does not return until a cycle has actually published.
     ///
     /// `refresh()` coalesces: if another cycle holds the lock it queues and returns
     /// immediately. A caller that needs authoritative state afterwards — such as
     /// re-enabling a switch after a write — would otherwise act on pre-write data.
     public func refreshAndWait(includeHeavy: Bool = true) async {
-        await refresh(includeHeavy: includeHeavy)
-        // If this call was coalesced, wait for the cycle that absorbed it.
-        var spins = 0
-        while (refreshInFlight || pendingOpenRefresh), spins < 100 {
-            spins += 1
-            try? await Task.sleep(nanoseconds: 50_000_000)
+        if refreshInFlight {
+            // Queue behind the running cycle and wait for the queued one to finish.
+            await refresh(includeHeavy: includeHeavy)
+            await waitForCompletion()
+            return
         }
+        await refresh(includeHeavy: includeHeavy)
+    }
+
+    private func waitForCompletion() async {
+        guard refreshInFlight || pendingOpenRefresh else { return }
+        await withCheckedContinuation { continuation in
+            completionWaiters.append(continuation)
+        }
+    }
+
+    /// Releases anyone waiting once no cycle is running or queued.
+    private func signalCompletionIfIdle() {
+        guard !refreshInFlight, !pendingOpenRefresh, !completionWaiters.isEmpty else { return }
+        let waiters = completionWaiters
+        completionWaiters.removeAll()
+        for waiter in waiters { waiter.resume() }
     }
 
     /// Runs a refresh that arrived while another cycle held the lock.
