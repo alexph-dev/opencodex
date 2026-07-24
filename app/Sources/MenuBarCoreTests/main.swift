@@ -11,5 +11,6 @@ FormattingSuite.run(runner)
 TransportSuite.run(runner)
 SnapshotStateSuite.run(runner)
 PollingSuite.run(runner)
+ActionSuite.run(runner)
 
 exit(runner.summarize())

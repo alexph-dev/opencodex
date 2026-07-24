@@ -101,6 +101,15 @@ final class ProbeDelegate: NSObject, NSApplicationDelegate {
             }
             await MainActor.run {
                 self.controller.apply(snap)
+                // Expand the provider list so its toggles are visible in the capture.
+                if ProcessInfo.processInfo.environment["PROBE_EXPAND"] == "1" {
+                    self.expandProviders(in: self.controller.view)
+                }
+                if ProcessInfo.processInfo.environment["PROBE_RESULT"] != nil {
+                    self.controller.showResult(
+                        ProcessInfo.processInfo.environment["PROBE_RESULT"]!,
+                        isError: ProcessInfo.processInfo.environment["PROBE_RESULT_ERROR"] == "1")
+                }
                 self.controller.view.layoutSubtreeIfNeeded()
                 // Match the real popover: size to content instead of a fixed frame.
                 let h = self.controller.preferredContentSize.height
@@ -110,6 +119,18 @@ final class ProbeDelegate: NSObject, NSApplicationDelegate {
             }
             try? await Task.sleep(nanoseconds: 1_200_000_000)
             await MainActor.run { self.capture() }
+        }
+    }
+
+    @MainActor func expandProviders(in view: NSView) {
+        for sub in view.subviews {
+            if let button = sub as? NSButton, button.bezelStyle == .disclosure {
+                button.state = .on
+                if let target = button.target, let action = button.action {
+                    _ = target.perform(action, with: button)
+                }
+            }
+            expandProviders(in: sub)
         }
     }
 

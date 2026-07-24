@@ -14,7 +14,11 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
     private let panel = PopoverPanel()
     private let controller = PopoverViewController()
     private var coordinator: PollingCoordinator?
+    private var actions: ActionCoordinator?
     private var client: ProxyClient?
+    /// The snapshot the UI is currently showing, for decisions that need context
+    /// (the start command to display, the default provider to protect).
+    private var latest: ProxySnapshot?
     private var endpoint = ProxyEndpoint.default
     private var pollTask: Task<Void, Never>?
     /// Fallback Escape handling for the case where the panel is visible but another
@@ -29,6 +33,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         self.client = client
         let coordinator = PollingCoordinator(client: client, endpoint: endpoint)
         self.coordinator = coordinator
+        self.actions = ActionCoordinator(client: client)
 
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         item.button?.image = StatusIcon.image(for: .loading)
@@ -43,6 +48,9 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         controller.onRefresh = { [weak self] in self?.refreshNow() }
         controller.onAddKey = { [weak self] in self?.openDashboard() }
         controller.onRetry = { [weak self] in self?.refreshNow() }
+        controller.onToggleProvider = { [weak self] name, disable in
+            self?.toggleProvider(name, disable: disable)
+        }
         controller.onQuit = { NSApp.terminate(nil) }
 
         panel.contentViewController = controller
@@ -88,6 +96,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @MainActor
     fileprivate func render(_ snapshot: ProxySnapshot) {
+        latest = snapshot
         statusItem?.button?.image = StatusIcon.image(for: snapshot.state)
         statusItem?.button?.toolTip = "OpenCodex — \(snapshot.state.title) (\(snapshot.endpoint.display))"
         controller.apply(snapshot)
@@ -147,8 +156,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     /// Stopping is destructive: it interrupts in-flight requests and stops the launchd
-    /// service, so nothing restarts the proxy. It always confirms first. Drain polling
-    /// and failure reporting land in Phase 3.
+    /// service, so nothing restarts the proxy. It always confirms first.
     private func stopProxy() {
         let alert = NSAlert()
         alert.messageText = "Stop the OpenCodex proxy?"
@@ -169,11 +177,50 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
             panel.makeKeyAndOrderFront(nil)
             return
         }
-        panel.dismiss()
 
-        Task { [client, coordinator] in
-            try? await client?.stop()
+        let startCommand = latest?.lastKnownStartCommand ?? "ocx start"
+        controller.showResult("Stopping…", isError: false)
+
+        Task { [actions, coordinator] in
+            let outcome = await actions?.stop(startCommand: startCommand) ?? .failed("Unavailable.")
             await coordinator?.refresh()
+            await MainActor.run { [weak self] in
+                switch outcome {
+                case .succeeded:
+                    self?.controller.showResult("Proxy stopped.", isError: false)
+                case .requiresManualStart(let command):
+                    // Not a failure — the API has no start endpoint by design.
+                    self?.controller.showResult("Proxy stopped. Start it again with \(command)", isError: false)
+                case .failed(let message):
+                    self?.controller.showResult(message, isError: true)
+                }
+            }
+        }
+    }
+
+    /// Optimistic toggle: the switch has already moved, so a rejection must move it back
+    /// rather than leave the UI showing a state the proxy refused.
+    private func toggleProvider(_ name: String, disable: Bool) {
+        let defaultProvider = latest?.defaultProvider
+
+        Task { [actions, coordinator] in
+            let outcome = await actions?.setProvider(name, disabled: disable, defaultProvider: defaultProvider)
+                ?? .failed("Unavailable.")
+            await MainActor.run { [weak self] in
+                switch outcome {
+                case .succeeded:
+                    self?.controller.showResult(
+                        disable ? "\(name) disabled." : "\(name) enabled.",
+                        isError: false
+                    )
+                case .failed(let message), .requiresManualStart(let message):
+                    self?.controller.revertProvider(name, to: !disable)
+                    self?.controller.showResult(message, isError: true)
+                }
+            }
+            // Re-read so the summary line and switch states match the proxy, not our
+            // optimistic guess.
+            await coordinator?.refresh(includeHeavy: true)
         }
     }
 }

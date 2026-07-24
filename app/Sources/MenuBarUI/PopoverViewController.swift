@@ -34,7 +34,10 @@ public final class PopoverViewController: NSViewController {
     private let sparkline = SparklineView()
     private let quotaStack = NSStackView()
     private let quotaEmpty = makeLabel("No provider quota sources connected.", font: Theme.caption, color: Theme.muted)
-    private let providerSummary = makeLabel("", font: Theme.caption, color: Theme.muted)
+    private let providers = ProviderListView()
+    /// Transient result of the last write action. Actions that report nothing leave the
+    /// user guessing whether anything happened.
+    private let resultBanner = makeLabel("", font: Theme.caption, color: Theme.muted)
     private let skeleton = SkeletonView()
     private let guidanceLabel: NSTextField = {
         let field = makeLabel("", font: Theme.caption, color: Theme.muted)
@@ -53,6 +56,8 @@ public final class PopoverViewController: NSViewController {
     public var onStop: (() -> Void)?
     public var onQuit: (() -> Void)?
     public var onRefresh: (() -> Void)?
+    /// `(provider, shouldDisable)`.
+    public var onToggleProvider: ((String, Bool) -> Void)?
     /// Distinct callbacks: "Retry" must retry in place, while "Add key…" navigates to
     /// the dashboard. Routing both through one handler made Retry open a browser.
     public var onAddKey: (() -> Void)?
@@ -60,16 +65,25 @@ public final class PopoverViewController: NSViewController {
 
     private var snapshot: ProxySnapshot?
     private var scrollHeight: NSLayoutConstraint?
+    /// Guards the banner's auto-hide so a newer result is not cleared by an older timer.
+    private var resultToken = 0
 
     public override func loadView() {
         configureControls()
+        resultBanner.isHidden = true
+        resultBanner.lineBreakMode = .byWordWrapping
+        resultBanner.maximumNumberOfLines = 3
+        resultBanner.preferredMaxLayoutWidth = Theme.width - Theme.gutter * 2
+        providers.onToggle = { [weak self] name, disable in
+            self?.onToggleProvider?(name, disable)
+        }
 
         body.orientation = .vertical
         body.alignment = .leading
         body.spacing = Theme.rowGap
         body.setViews(
             [skeleton, metrics, sparkline, metricsSeparator, quotaStack, quotaEmpty,
-             providerSummary, quotaSeparator, guidanceLabel, commandField],
+             providers, quotaSeparator, resultBanner, guidanceLabel, commandField],
             in: .top
         )
         body.translatesAutoresizingMaskIntoConstraints = false
@@ -178,12 +192,12 @@ public final class PopoverViewController: NSViewController {
             metrics.apply(snapshot)
             sparkline.apply(snapshot)
             applyQuotas(snapshot)
-            applyProviders(snapshot)
+            providers.apply(snapshot)
         } else {
             sparkline.isHidden = true
             quotaStack.isHidden = true
             quotaEmpty.isHidden = true
-            providerSummary.isHidden = true
+            providers.isHidden = true
         }
 
         applyGuidance(snapshot)
@@ -208,19 +222,29 @@ public final class PopoverViewController: NSViewController {
         }
     }
 
-    private func applyProviders(_ snapshot: ProxySnapshot) {
-        guard snapshot.providersLoaded else {
-            providerSummary.isHidden = true
-            return
-        }
-        providerSummary.isHidden = false
-        if snapshot.providers.isEmpty {
-            providerSummary.stringValue = "No providers configured."
-        } else {
-            let enabled = snapshot.providers.filter(\.isEnabled).count
-            providerSummary.stringValue = "\(enabled) of \(snapshot.providers.count) providers enabled"
+    /// Shows the outcome of a write action, then clears itself. A banner that never
+    /// leaves would become permanent furniture.
+    public func showResult(_ text: String, isError: Bool) {
+        resultBanner.stringValue = text
+        resultBanner.textColor = isError ? Theme.red : Theme.muted
+        resultBanner.isHidden = false
+        refreshSize()
+
+        resultToken &+= 1
+        let token = resultToken
+        DispatchQueue.main.asyncAfter(deadline: .now() + 6) { [weak self] in
+            guard let self, self.resultToken == token else { return }
+            self.resultBanner.isHidden = true
+            self.refreshSize()
         }
     }
+
+    public func revertProvider(_ name: String, to enabled: Bool) {
+        providers.revert(name, to: enabled)
+    }
+
+    /// Re-measures after content changes height (disclosure, banner).
+    public func refreshSize() { resize() }
 
     /// Guidance text plus any command the user should run. Commands are shown as
     /// selectable text; the app never executes them.

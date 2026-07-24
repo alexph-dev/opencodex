@@ -7,15 +7,28 @@ running proxy, with the observed response and the resulting UI state.
 Constraint from the user's scope: **no new proxy endpoints.** Everything here calls
 routes inventoried in `002` §4.
 
+## Stale check at P (what Phase 2 already landed)
+
+Re-verifying this document against the tree found three items already done, because the
+UI phase could not ship a `Stop proxy` button without them:
+
+- `ProxyClient.stop()` and `setProviderDisabled(_:disabled:)` exist (`010`/`020`).
+- The confirmation sheet exists as an `NSAlert` in `AppDelegate.stopProxy()`, including
+  the `isPresentingModal` guard that keeps the panel alive behind it.
+- `ConfirmSheet.swift` is therefore not needed as a separate file.
+
+What remained, and is what this phase delivers: an `ActionCoordinator` that reports what
+actually happened, the provider toggle UI, and result feedback in the popover.
+
 ## File change map
 
 | Path | Action |
 | --- | --- |
 | `app/Sources/MenuBarCore/ProxyClient.swift` | MODIFY — add write methods |
 | `app/Sources/MenuBarCore/ActionCoordinator.swift` | NEW |
-| `app/Sources/MenuBarApp/Views/ActionBarView.swift` | MODIFY — wire Stop proxy |
-| `app/Sources/MenuBarApp/Views/ProviderListView.swift` | NEW — disclosure + toggles |
-| `app/Sources/MenuBarApp/Views/ConfirmSheet.swift` | NEW |
+| `app/Sources/MenuBarUI/ProviderListView.swift` | NEW — disclosure + toggles |
+| `app/Sources/MenuBarUI/PopoverViewController.swift` | MODIFY — result banner, provider section |
+| `app/Sources/MenuBarUI/AppDelegate.swift` | MODIFY — wire both actions to the coordinator |
 | `app/Sources/MenuBarCoreTests/ActionSuite.swift` | NEW |
 
 ## `ProxyClient` additions
@@ -163,6 +176,32 @@ Stubbed `URLProtocol`:
   attempted.
 - No code path constructs a `Process` / `NSTask`.
 - No error path leaks a response body into `ActionOutcome`.
+
+## Implementation notes
+
+**The stop timeout needed an injectable clock, not just a no-op sleeper.** The first test
+for "a proxy that keeps answering is a failure" passed a sleeper that did nothing — and
+the test failed, reporting success. The loop is bounded by a wall-clock deadline, so
+skipping the sleep without advancing the clock means the deadline never arrives. Both the
+sleeper and `now` are injected.
+
+The same test also exposed a harness trap worth recording: `StubProtocol` falls back to
+"connection refused" once its response queue drains, which reads as a successful stop. A
+test that queues too few responses will pass for the wrong reason.
+
+**Live verification** against the running proxy (`ActionProbe`, removed after use):
+
+```text
+default provider: openai
+target: anthropic enabled: true
+disable    -> succeeded    proxy now reports enabled: false
+re-enable  -> succeeded    proxy now reports enabled: true
+default-provider guard -> failed("openai is the default provider. Choose another default…")
+```
+
+Proxy state was confirmed restored afterwards: 10 providers, 10 enabled. `stop` was
+deliberately not exercised live — it would interrupt the user's own proxy, and its
+timing behaviour is covered by the stubbed timeout tests.
 
 ## Accept criteria
 
