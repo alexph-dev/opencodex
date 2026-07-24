@@ -60,12 +60,6 @@ resolve_physical() {
     esac
   done
 
-  local normalised="/"
-  if [[ ${#stack[@]} -gt 0 ]]; then
-    printf -v normalised '/%s' "${stack[@]}"
-    normalised="${normalised//\/\//\/}"
-  fi
-
   # Now resolve physically, component by component, so a symlink ANYWHERE along the
   # surviving path is followed — including one that only became reachable because a
   # `..` removed a non-existent parent above it.

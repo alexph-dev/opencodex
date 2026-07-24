@@ -64,11 +64,23 @@ configuration="${CONFIGURATION:-release}"
 # resolve_physical therefore normalises lexically first (quoted array iteration, so a
 # literal glob is not expanded), then resolves component by component, and refuses any
 # symlink that does not resolve to an existing directory.
+#
+# ABBREVIATED. scripts/build-macos-app.sh is authoritative — in particular resolve_physical
+# itself, and the $TMPDIR handling below, which matters because macOS puts TMPDIR under
+# /var/folders rather than /tmp. A containment check that allowed only /tmp would reject
+# the packaging script's own temporary build root.
 output_root="$(resolve_physical "$output_root")"
 allowed_root="$(cd "$repo_root" && pwd -P)"
+allowed_tmp="$(cd "${TMPDIR%/}" 2>/dev/null && pwd -P || echo "")"
 case "$output_root" in
-  "$allowed_root"/*|/private/tmp/*|/tmp/*) ;;
-  *) echo "Refusing to build into '$output_root'" >&2; exit 1 ;;
+  "$allowed_root"/*) ;;
+  /private/tmp/*|/tmp/*) ;;
+  *)
+    if [[ -z "$allowed_tmp" || "$output_root" != "$allowed_tmp"/* ]]; then
+      echo "Refusing to build into '$output_root'" >&2
+      exit 1
+    fi
+    ;;
 esac
 
 # Only NOW create it, so a refused path leaves nothing behind.
@@ -408,8 +420,28 @@ broken.
        appending a fourth component, which Apple ignores.
    3b. `OUTPUT_DIR` outside the repository or temp is refused, since the build deletes
        whatever sits at the destination. Covered by `tests/macos-build-script.test.ts`,
-       including an unresolved `..` traversal and a symlinked destination, and asserting
-       that a refused path creates no directory.
+       **8 cases**, each asserting that a refused path creates nothing:
+
+       1. a sibling-of-repository path
+       2. an unresolved `..` traversal
+       3. a symlink revealed by a `..`
+       4. a symlink pointing outside the permitted roots
+       5. a symlink with a *relative* escaping target
+       6. a literal glob, run from a directory containing a matching entry
+       7. a repository path (accepted)
+       8. a temp path (accepted)
+
+       Two harness details are load-bearing, both learned by getting them wrong:
+
+       - The outside path is a **sibling of the repository**, not anything under `$HOME`.
+         Other suites replace `HOME` with a temp directory, and temp is a permitted root,
+         so a `HOME`-derived path made this test pass alone and fail in the full suite.
+       - The traversal fixture is built by **string concatenation**, never `path.join()`,
+         which normalises `..` itself — with `join()` the test passed against the broken
+         resolver.
+       - The glob case runs the child in a directory that **contains a matching entry**.
+         With `cwd` at the repository root and the glob under `dist/`, the old unquoted
+         loop had nothing to expand and the test passed against the broken implementation.
 4. `UNIVERSAL=1` under Command Line Tools fails with the explanatory message, not a
    linker error.
 5. The build script runs end to end on a clean checkout under `set -euo pipefail`, with
