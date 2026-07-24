@@ -6,10 +6,15 @@ import Security
 /// The key is read lazily — only after a 401 — and is never written to UserDefaults,
 /// never logged, and never included in an error surfaced to the UI.
 ///
-/// **Read-only in practice today.** Nothing in the app calls `write`: there is no key
-/// entry UI yet, so a user with a non-loopback proxy has to create the Keychain item
-/// themselves. `write`/`delete` exist for the entry flow that is planned, and the docs
-/// say plainly that the case is not fully supported rather than implying it works.
+/// **Read-only in practice today, and there is no way to provision the key.** Nothing in
+/// the app calls `write`, because there is no key-entry UI yet — and a user cannot fill
+/// the gap by hand either: every query sets `kSecUseDataProtectionKeychain`, and
+/// Keychain Access does not create data-protection items. So a non-loopback bind is
+/// genuinely unsupported rather than merely inconvenient, and the docs say exactly that.
+///
+/// `write`/`delete` exist for the native entry flow that is planned. Do not document a
+/// manual workaround on top of them: an earlier revision of the guide did, naming a
+/// service that was both wrong and unreachable.
 ///
 /// Every query sets `kSecUseDataProtectionKeychain`. Without it, `kSecAttrAccessible` is
 /// ignored on macOS (it applies only to data-protection or synchronizable items), so the
