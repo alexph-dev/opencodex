@@ -60,8 +60,20 @@ menubar/scripts/       build-app.sh, check-version.sh
 
 **Transport: HTTP management API.** `discover.rs` reads
 `~/.opencodex/runtime-port.json`; `api.rs` proxies WebView `invoke("api_request")` calls
-through Rust `reqwest` so the API token stays out of JS memory, sourced from the macOS
-Keychain. Zero proxy-side changes — it consumes only endpoints that already exist.
+through Rust `reqwest`, with the key sourced from the macOS Keychain. Zero proxy-side
+changes — it consumes only endpoints that already exist.
+
+The PR body claims the token "never crosses to WebView JS". **That is not what the code
+does at head `049ef2ac`** — `menubar/src/api.ts:12-13` receives it directly:
+
+```ts
+const discovery = await invoke<{ url: string; token: string | null; found: boolean }>("discover_proxy");
+proxyConfig = { url: discovery.url, token: discovery.token };
+```
+
+The token is returned to the renderer and cached in module state. The Rust IPC layer is
+still a reasonable shape, but the isolation claim does not hold, so this plan does not
+credit it and does not repeat it in the closing comment.
 
 Design: four-tab segmented widget (Usage / Health / Status / Activity), Apple-style
 white theme, tabular-nums stats, `macOSPrivateApi: true` for a transparent rounded
@@ -114,10 +126,10 @@ transport and information architecture.
 
 Rationale, in order of weight:
 
-1. **Distribution is the whole point of the user's question.** A menu bar app that the
-   user must compile is not a shipped app. #387 already proves the packaging path end to
-   end; #421 explicitly declines it. Rebuilding Tauri packaging from scratch would mean
-   re-deriving what #387 already verified.
+1. **Distribution is the whole point of the user's question.** #421 can build an `.app`
+   and a `.dmg` locally, but nothing in the repository builds or publishes one: `.github/`
+   is untouched, so no user can download a build. #387 already proves the full path —
+   packaged, checksummed, and attached to a GitHub Release.
 2. **HTTP beats CLI subprocess for a polling UI.** Spawning `ocx` every refresh cycle
    costs a process launch plus Bun startup per tick, requires the brace-slicing hack to
    survive incidental stdout, and — decisively — needs `src/cli/status.ts` to grow new
@@ -194,7 +206,10 @@ plan: the audit that caught this document's own stale claims used that head as e
 
 - **Merge #387, then re-skin later.** Rejected: it lands the `src/cli/status.ts` change
   the user excluded, and the CLI transport would have to be replaced anyway.
-- **Merge #421, then add packaging.** Rejected: the committed `target/` tree fails
-  `privacy:scan` and would need history rewriting, and the private-API dependency stays.
+- **Merge #421, then add packaging.** Rejected on the current head's remaining facts:
+  the Rust + Node + Tauri toolchain is a large addition to a single-Bun-process project,
+  and `macOSPrivateApi: true` keeps a notarization and App-Store-rejection risk that
+  `NSPopover` avoids. (The committed-artifact defect is fixed — §2.1 — and is explicitly
+  NOT a reason.)
 - **Ask the contributors to converge.** Rejected: the user asked for the maintainer
   version now; a two-way contributor negotiation is slower and leaves both PRs open.

@@ -61,16 +61,39 @@ Apple's security-update window. Zero third-party dependencies is a hard rule.
 ## `app/Info.plist`
 
 ```xml
-<key>LSUIElement</key><true/>
-<key>CFBundleIdentifier</key><string>com.opencodex.menubar</string>
-<key>CFBundleName</key><string>OpenCodex</string>
-<key>LSMinimumSystemVersion</key><string>13.0</string>
-<key>NSHumanReadableCopyright</key><string>MIT — opencodex contributors</string>
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleDevelopmentRegion</key>      <string>en</string>
+  <key>CFBundleExecutable</key>             <string>OpenCodexMenuBar</string>
+  <key>CFBundleIdentifier</key>             <string>com.opencodex.menubar</string>
+  <key>CFBundleInfoDictionaryVersion</key>  <string>6.0</string>
+  <key>CFBundleName</key>                   <string>OpenCodex</string>
+  <key>CFBundleDisplayName</key>            <string>OpenCodex</string>
+  <key>CFBundlePackageType</key>            <string>APPL</string>
+  <key>CFBundleIconFile</key>               <string>OpenCodex</string>
+  <key>CFBundleShortVersionString</key>     <string>0.0.0</string>
+  <key>CFBundleVersion</key>                <string>0.0.0</string>
+  <key>LSUIElement</key>                    <true/>
+  <key>LSMinimumSystemVersion</key>         <string>13.0</string>
+  <key>NSHumanReadableCopyright</key>       <string>MIT — opencodex contributors</string>
+</dict>
+</plist>
 ```
 
-`LSUIElement` is what makes it a menu bar app: no Dock icon, no menu bar menus of its
-own. `CFBundleShortVersionString` is injected by the build script from `package.json` so
-the app version can never drift from the proxy release.
+Three keys are load-bearing and an earlier draft omitted all of them, which would have
+produced a bundle macOS refuses to launch:
+
+- `CFBundleExecutable` must equal the binary name the builder copies into
+  `Contents/MacOS/` — `OpenCodexMenuBar`.
+- `CFBundlePackageType` must be `APPL` for the bundle to be treated as an application.
+- `CFBundleIconFile` is `OpenCodex` (no extension), matching the `OpenCodex.icns` the
+  builder writes into `Contents/Resources/`.
+
+`LSUIElement` is what makes it a menu bar app: no Dock icon, no menu bar menus of its own.
+The two version strings are placeholders — the build script overwrites both from
+`package.json` (`040`), so the app can never claim a version the release did not ship.
 
 ## `Discovery.swift`
 

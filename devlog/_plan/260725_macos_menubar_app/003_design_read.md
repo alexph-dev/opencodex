@@ -111,15 +111,16 @@ column.
 │ ● Running          127.0.0.1:10100   │  status line — the answer
 │   protected · service                │  qualifier, muted, 11px
 ├──────────────────────────────────────┤
+│ LAST 7 DAYS                          │  range echoed from the response
 │ REQUESTS      TOKENS         COST    │  micro labels, 10px, letterspaced
 │ 1,746         12.4M         $8.21    │  tabular-nums, 13px
-│ ▁▂▃▅▂▁▃▇▄▂▁▃                        │  24h sparkline from usage.days[]
+│ ▁▂▃▅▂▁▃                              │  7d usage trend from usage.days[]
 ├──────────────────────────────────────┤
 │ OpenAI          ▓▓▓▓▓░░░░░  44%      │  quota rows, one per provider
 │ Anthropic       ▓▓▓▓▓▓░░░░  58%      │
 │ xAI             ▓▓▓▓▓▓▓▓▓░  87%      │  amber >80, red >95
 ├──────────────────────────────────────┤
-│ Dashboard          Restart      ···  │  actions
+│ Dashboard        Stop proxy     ···  │  actions
 └──────────────────────────────────────┘
 ```
 

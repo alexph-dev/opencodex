@@ -62,12 +62,18 @@ to restart.
 ### To #421 (genglintong)
 
 Names what was adopted: HTTP management-API transport, `runtime-port.json` discovery with
-the 10100 fallback, keeping the API token out of the rendering layer, skipping auth when
-the proxy has no `apiKeys` configured, the usage/health/status/activity information set,
-and tabular-numeral stat treatment.
+the 10100 fallback, Keychain-backed key storage, skipping auth when the proxy has no
+`apiKeys` configured, the usage/health/status information set, and tabular-numeral stat
+treatment.
 
-**Must be written against head `049ef2ac`, not the head the bots reviewed.** The
-contributor's commit "address all Codex review findings (5 P1 + 14 P2)" removed the
+**Do not credit renderer-side token isolation.** `001` §2 shows `menubar/src/api.ts:12-13`
+returning the token into renderer memory at head `049ef2ac`, so the PR body's claim does
+not hold and repeating it would put a false statement in the record.
+
+**Must be written against head `049ef2ac`.** CodeRabbit's review is anchored to that same
+head, so this is not a "bots reviewed an older tree" situation — the tree simply changed
+after the Codex reviewer's P1. The contributor's commit titled "address all Codex review
+findings (5 P1 + 14 P2)" removed the
 committed `src-tauri/target/**` tree; `001` §2.1 verifies zero matching paths remain. The
 comment explicitly acknowledges that fix. Repeating the stale defect would be factually
 wrong and would misrepresent a contributor who responded to review properly.

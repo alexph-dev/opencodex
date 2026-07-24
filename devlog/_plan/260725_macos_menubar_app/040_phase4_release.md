@@ -1,8 +1,9 @@
 # 040 — Phase 4: universal build, release packaging, CI wiring
 
-**Depends on:** `010`-`030` (there must be an app worth packaging). Phase 2 produces the
-first launchable bundle via a minimal builder; this phase hardens it into a signed,
-verified, distributable artifact.
+**Depends on:** `010`-`030` (there must be an app worth packaging). Phases 1-3 verify
+themselves through `swift test` / `swift build` / `swift run`; **this phase owns the
+bundle end to end** — `scripts/build-macos-app.sh` is introduced here and the first `.app`
+is produced here.
 **Independently verifiable by:** `lipo -archs` on the packaged executable, archive
 content assertion, and workflow syntax validation.
 
@@ -228,7 +229,7 @@ package-macos:
 attach-macos:
   runs-on: ubuntu-latest
   needs: [publish, package-macos]
-  if: ${{ inputs.dry_run != true }}
+  if: ${{ inputs.dry-run != true }}
   timeout-minutes: 10
   permissions:
     contents: write           # only to attach assets to the existing Release
@@ -246,7 +247,10 @@ attach-macos:
 ```
 
 `shasum -c` before upload means a corrupted artifact transfer cannot become a published
-asset. `if: inputs.dry_run != true` keeps dry runs from touching a real Release.
+asset. `if: ${{ inputs.dry-run != true }}` keeps dry runs from touching a real Release. The
+input is named `dry-run` with a hyphen (`release.yml:22-26`); `inputs.dry_run` would
+resolve to null and the guard would silently pass, which is the exact failure this line
+exists to prevent.
 
 **`UNIVERSAL: "1"` is safe here specifically because `macos-latest` carries a full
 Xcode**, the environment `001` §4.1 identified as the only one that can produce both

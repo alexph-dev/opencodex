@@ -81,13 +81,14 @@ bundle must exist before packaging can wrap it.
 | --- | --- | --- | --- |
 | 0 | `000`-`003` | Research, API inventory, design lock, this roadmap | Docs exist, audit passes |
 | 1 | `010` | `app/` skeleton, proxy discovery, typed API client | `swift test` + `swift build` green |
-| 2 | `020` | Menu bar item + popover UI, all states, first launchable bundle | Screenshot of running app |
+| 2 | `020` | Menu bar item + popover UI, all states | Screenshot via `swift run` |
 | 3 | `030` | Write actions on existing endpoints | Live action against running proxy |
 | 4 | `040` | Universal build, packaging, CI/release wiring | `lipo -archs`, workflow syntax |
 | 5 | `050` | Docs, PR closure, push | `gh pr view`, `git ls-remote` |
 
-Phase 1 closes on the compiler and tests, not on a bundle: `scripts/build-macos-app.sh`
-is a Phase-4 artifact, and a phase may not be verified by a later phase's output.
+Phases 1-3 close on `swift test` / `swift build` / `swift run` — never on a bundle.
+`scripts/build-macos-app.sh` and the first `.app` belong entirely to Phase 4, so no phase
+is verified by a later phase's output.
 
 ## Scope boundary
 
@@ -100,17 +101,19 @@ to `dev`/`main`, the six Haydern provider PRs, `gui/**` beyond required asset re
 
 ## Accept criteria (mirrored into the goalplan)
 
-1. `app/` produces a launchable `.app` bundle from a repo script.
+1. `app/` produces a launchable `.app` bundle from a repo script (Phase 4).
 2. Proxy discovery honours `~/.opencodex/runtime-port.json` and falls back to 10100.
 3. The popover renders health, usage trend, quotas, and providers from live data.
    ("Activity" is the day-granular usage trend; per-request logs are out of scope for v1.)
-4. Loading / empty / error / proxy-unreachable states each render a next action.
+4. Every state renders a meaningful surface; error, unauthorized, unreachable, and empty
+   states each name a next action. `loading` is exempt — there is nothing to act on yet.
 5. Write actions call only pre-existing endpoints, and the app never spawns a process.
 6. Release build is universal (arm64 + x86_64) **in CI**; local arm64-only is accepted
    and documented (see `001` §4).
 7. `bun run typecheck`, `bun run test`, `bun run privacy:scan` green.
-8. No build artifacts committed, and no developer-absolute home path in any tracked file
-   (including `devlog/`, which `privacy:scan` does not cover).
+8. No build artifacts committed, and no developer-absolute home path in **any file this
+   unit adds or modifies** (including its `devlog/` docs, which `privacy:scan` excludes).
+   Pre-existing paths in unrelated historical devlogs are out of scope.
 9. PRs #387 and #421 closed with English maintainer comments crediting both authors, each
    written against the PR's head commit at the time of posting.
 10. `feat/macos-app` pushed to origin.

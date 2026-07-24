@@ -4,6 +4,12 @@
 **Independently verifiable by:** a screenshot of the running app read back with
 `view_image`, plus state-coverage tests.
 
+**No `.app` bundle in this phase.** Visual QA runs the Swift executable directly
+(`swift run --package-path app OpenCodexMenuBar`), which registers a menu bar item and
+opens the popover exactly like a bundled build. `scripts/build-macos-app.sh` and the first
+`.app` are Phase-4 deliverables; an earlier draft moved the "first launchable bundle" here
+without moving the builder that produces it.
+
 Implements the locked direction in `003`. Dials: `DESIGN_VARIANCE 2`,
 `MOTION_INTENSITY 1`, density `D7`.
 
@@ -228,8 +234,8 @@ looks like "0% used".
 | State | Header | Body | Action |
 | --- | --- | --- | --- |
 | `loading` | "Checking…" neutral dot | skeleton rows, em dashes | none |
-| `running` | "Running" + green | live metrics, sparkline, quotas | Dashboard · Restart |
-| `unreachable` | "Stopped" + red | "The proxy is not running." | **Start proxy** |
+| `running` | "Running" + green | live metrics, usage trend, quotas | Dashboard · Stop proxy |
+| `unreachable` | "Stopped" + red | "The proxy is not running." | start command as selectable text |
 | `unauthorized` | "Needs API key" + amber | "This proxy requires a key." | **Add key…** |
 | `degraded` | "Degraded" + amber | last known values + staleness age | Retry |
 
@@ -240,6 +246,22 @@ Corrections from the Phase-0 audit, carried in from `030`:
 - The `unreachable` action is **not** a button that starts anything. It displays the
   command to run (`ocx start`, or `ocx service start` when a service is installed) as
   selectable text, since the app never spawns processes.
+
+### Empty states (per-section, distinct from `loading`)
+
+`loading` means "not known yet" and correctly offers no action. **Empty means "known, and
+there is nothing"** — a different fact needing different copy. Each data section defines
+its own:
+
+| Section | Empty condition | Copy | Action |
+| --- | --- | --- | --- |
+| Metrics | `summary` present, `requests == 0` | "No requests in the last 7 days." | Dashboard |
+| Usage trend | `days` empty or all-zero | bars omitted entirely, no flat line | none |
+| Quotas | `reports` empty | "No provider quota sources connected." | Dashboard |
+| Providers | `providers` empty | "No providers configured." | Dashboard |
+
+A zero is rendered as `0` only when the server actually reported zero; unknown stays an em
+dash (`003` §6). Conflating the two is the fake-data tell.
 
 Every non-running state names its next action — `dev-uiux-design` UX-STATE-01 forbids
 dead-ending the user. `degraded` deliberately keeps the last known values with an explicit
@@ -263,11 +285,16 @@ what the screenshot shows, then re-verify. Code review alone does not close this
 
 1. Menu bar icon renders as a template image and changes with state.
 2. Popover renders live data from the running proxy at 340pt.
-3. All five states reachable and each names a next action.
+3. All five states reachable; each except `loading` names a next action.
 4. Screenshot inspected with `view_image` in both appearances.
 5. Keyboard: popover opens, Tab reaches every control, Escape closes.
 6. The metrics header renders the range the response returned, verified by forcing a
    fallback (`?range=bogus` → server answers `30d` → header must read `LAST 30 DAYS`).
+   The `UsageRange` enum is closed, so production code cannot issue `?range=bogus`; the
+   test injects a stubbed response whose `range` differs from the requested value and
+   asserts the header follows the response. A direct `curl ?range=bogus` is kept only as
+   server-contract evidence in `002`.
 7. Sparkline bar count equals `days.count`, not a hardcoded 24.
-8. A launchable `.app` bundle exists (first bundle milestone; `040` hardens it).
-9. `swift test --package-path app` green.
+8. Each empty state above renders its defined copy, distinct from `loading`.
+9. `swift run --package-path app OpenCodexMenuBar` shows the menu bar item and popover.
+10. `swift test --package-path app` green.

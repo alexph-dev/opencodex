@@ -1,7 +1,7 @@
 # 030 — Phase 3: write actions on existing endpoints
 
 **Depends on:** `020` (the UI must exist to report a result into).
-**Independently verifiable by:** a live restart and a live provider toggle against the
+**Independently verifiable by:** a live stop and a live provider toggle against the
 running proxy, with the observed response and the resulting UI state.
 
 Constraint from the user's scope: **no new proxy endpoints.** Everything here calls
@@ -13,7 +13,7 @@ routes inventoried in `002` §4.
 | --- | --- |
 | `app/Sources/MenuBarCore/ProxyClient.swift` | MODIFY — add write methods |
 | `app/Sources/MenuBarCore/ActionCoordinator.swift` | NEW |
-| `app/Sources/MenuBarApp/Views/ActionBarView.swift` | MODIFY — wire Restart |
+| `app/Sources/MenuBarApp/Views/ActionBarView.swift` | MODIFY — wire Stop proxy |
 | `app/Sources/MenuBarApp/Views/ProviderListView.swift` | NEW — disclosure + toggles |
 | `app/Sources/MenuBarApp/Views/ConfirmSheet.swift` | NEW |
 | `app/Tests/MenuBarCoreTests/ActionTests.swift` | NEW |
@@ -66,8 +66,9 @@ start it again (`ocx start`, or `ocx service start` when a service is installed)
 selectable text. The app does not spawn processes the user did not ask for, and it does
 not claim a capability the API does not have.
 
-This also removes the `serviceManaged` branch an earlier draft assumed, and with it the
-`StartupHealth.serviceInstalled` / `serviceEnabled` fields that `010` never declared.
+This removes the `serviceManaged` computed branch an earlier draft assumed. The
+`StartupHealth.serviceInstalled` / `serviceEnabled` fields are still decoded in `010` —
+they render the status qualifier line in `020`, they just no longer gate an action.
 
 ### The drain problem
 
