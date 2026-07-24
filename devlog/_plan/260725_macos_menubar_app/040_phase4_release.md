@@ -88,11 +88,7 @@ explanation. PR #387 discovered this and its message is kept nearly verbatim.
 Staging, then atomic swap:
 
 ```bash
-mkdir -p "$output_root"
-# Resolve physically AND normalise: walking up to the nearest existing ancestor and
-# re-appending the tail verbatim was a real bypass — <repo>/.nope/../../outside resolved
-# to itself, passed the prefix check, and mkdir -p then followed the .. out of the repo.
-output_root="$(resolve_physical "$output_root")"
+# See the containment block above: validation happens before any mkdir.
 staging_root="$(mktemp -d "$output_root/.OpenCodex-build.XXXXXX")"
 staged_app="$staging_root/OpenCodex.app"
 iconset="$staging_root/OpenCodex.iconset"

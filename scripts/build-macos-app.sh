@@ -26,29 +26,69 @@ fi
 # Resolve physically: walk up to the nearest existing ancestor, resolve that, and
 # re-append the parts that do not exist yet.
 resolve_physical() {
-  local target="$1" tail="" part resolved
+  local target="$1" part resolved
   # Absolute-ise relative input against the caller's directory.
   [[ "$target" = /* ]] || target="$PWD/$target"
 
-  # Walk up to the nearest EXISTING ancestor and resolve that physically, collecting the
-  # not-yet-existing components on the way.
-  while [[ ! -d "$target" && "$target" != "/" ]]; do
-    tail="$(basename "$target")${tail:+/$tail}"
-    target="$(dirname "$target")"
-  done
-  resolved="$(cd "$target" && pwd -P)"
-
-  # Normalise the collected tail. Re-appending it verbatim was a real bypass: a path
-  # like <repo>/.does-not-exist/../../outside resolved to itself, satisfied the prefix
-  # check, and then `mkdir -p` followed the `..` components straight out of the
-  # repository — after which the destructive replace ran outside the permitted roots.
+  # ORDER MATTERS, and getting it wrong has been a bypass twice.
+  #
+  # 1. Normalise lexically FIRST. Resolving physically first and normalising afterwards
+  #    lets `..` reveal a symlink that is then never physically resolved — so
+  #    <repo>/.missing/../some-symlink passed containment while pointing elsewhere.
+  # 2. THEN walk up to the nearest existing ancestor of the normalised path and resolve
+  #    that with `pwd -P`, which follows any symlinks that survived normalisation.
+  #
+  # Iteration is over a quoted array, never `for part in $tail`: word splitting there
+  # let a literal glob such as `rel*` expand against the filesystem.
+  local -a parts=() stack=()
   local IFS=/
-  for part in $tail; do
+  read -r -a parts <<< "$target"
+  unset IFS
+
+  for part in "${parts[@]}"; do
     case "$part" in
       "" | ".") continue ;;
-      "..") resolved="$(dirname "$resolved")" ;;
-      *) resolved="$resolved/$part" ;;
+      "..")
+        # `unset 'stack[-1]'` is a bad subscript in bash 3.2 (what macOS ships), so it
+        # silently failed and `..` was never applied. Compute the index instead.
+        if [[ ${#stack[@]} -gt 0 ]]; then
+          unset "stack[$(( ${#stack[@]} - 1 ))]"
+          stack=("${stack[@]}")
+        fi
+        ;;
+      *) stack+=("$part") ;;
     esac
+  done
+
+  local normalised="/"
+  if [[ ${#stack[@]} -gt 0 ]]; then
+    printf -v normalised '/%s' "${stack[@]}"
+    normalised="${normalised//\/\//\/}"
+  fi
+
+  # Now resolve physically, component by component, so a symlink ANYWHERE along the
+  # surviving path is followed — including one that only became reachable because a
+  # `..` removed a non-existent parent above it.
+  #
+  # Resolving only the nearest existing ancestor is not enough: for
+  # <repo>/.missing/../outward-link the ancestor is <repo>, and the trailing
+  # `outward-link` symlink was re-appended unresolved and never followed.
+  resolved="/"
+  for part in "${stack[@]}"; do
+    local candidate="${resolved%/}/$part"
+    if [[ -d "$candidate" ]]; then
+      # Follows the symlink when there is one.
+      resolved="$(cd "$candidate" && pwd -P)"
+    elif [[ -L "$candidate" ]]; then
+      # A symlink to something that is not a directory (or is dangling): resolve its
+      # target lexically rather than trusting the link path.
+      local link_target
+      link_target="$(readlink "$candidate")"
+      [[ "$link_target" = /* ]] || link_target="${resolved%/}/$link_target"
+      resolved="$link_target"
+    else
+      resolved="${resolved%/}/$part"
+    fi
   done
   printf '%s' "$resolved"
 }
