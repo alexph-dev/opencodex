@@ -1,0 +1,135 @@
+import Foundation
+
+/// Everything the UI can show, as one value.
+///
+/// Views are pure functions of this snapshot, so no view invents its own loading flag or
+/// decides independently whether data is missing.
+public enum ProxyState: Equatable, Sendable {
+    /// First fetch in flight; nothing is known yet.
+    case loading
+    case running(StartupHealth)
+    /// Connection refused — the proxy is not running.
+    case unreachable
+    /// 401 with no usable credential.
+    case unauthorized
+    /// Reachable but erroring. The message is proxy-free human text.
+    case degraded(String)
+
+    public var isRunning: Bool {
+        if case .running = self { return true }
+        return false
+    }
+
+    /// Short label shown beside the status dot. Colour is never the only carrier of
+    /// meaning, so every state has a word.
+    public var title: String {
+        switch self {
+        case .loading: return "Checking…"
+        case .running: return "Running"
+        case .unreachable: return "Stopped"
+        case .unauthorized: return "Needs API key"
+        case .degraded: return "Degraded"
+        }
+    }
+
+    public enum Tone: Sendable { case neutral, good, warning, bad }
+
+    public var tone: Tone {
+        switch self {
+        case .loading: return .neutral
+        case .running(let health): return health.isProtected ? .good : .warning
+        case .unreachable: return .bad
+        case .unauthorized: return .warning
+        case .degraded: return .warning
+        }
+    }
+
+    /// Secondary line under the title.
+    public var detail: String? {
+        switch self {
+        case .loading:
+            return nil
+        case .running(let health):
+            let parts = [health.status, health.protection]
+                .compactMap { $0 }
+                .filter { !$0.isEmpty && $0 != "none" }
+            return parts.isEmpty ? nil : parts.joined(separator: " · ")
+        case .unreachable:
+            return "The proxy is not running."
+        case .unauthorized:
+            return "This proxy requires an API key."
+        case .degraded(let message):
+            return message
+        }
+    }
+}
+
+/// What the user should do next. `loading` deliberately has none — there is nothing to
+/// act on yet — but every other non-running state names one.
+public enum NextAction: Equatable, Sendable {
+    case none
+    /// A command to run, shown as selectable text. The app never spawns processes.
+    case runCommand(String)
+    case addAPIKey
+    case retry
+}
+
+public struct ProxySnapshot: Equatable, Sendable {
+    public var state: ProxyState
+    public var endpoint: ProxyEndpoint
+    public var usage: UsageReport?
+    public var quotas: [QuotaReport]
+    public var providers: [ProviderSummary]
+    public var defaultProvider: String?
+    public var lastUpdated: Date?
+    public var consecutiveFailures: Int
+    /// Remembered from the last successful health read, so a stopped proxy can still
+    /// tell the user the right start command for their install.
+    public var lastKnownStartCommand: String?
+
+    public init(
+        state: ProxyState = .loading,
+        endpoint: ProxyEndpoint,
+        usage: UsageReport? = nil,
+        quotas: [QuotaReport] = [],
+        providers: [ProviderSummary] = [],
+        defaultProvider: String? = nil,
+        lastUpdated: Date? = nil,
+        consecutiveFailures: Int = 0,
+        lastKnownStartCommand: String? = nil
+    ) {
+        self.state = state
+        self.endpoint = endpoint
+        self.usage = usage
+        self.quotas = quotas
+        self.providers = providers
+        self.defaultProvider = defaultProvider
+        self.lastUpdated = lastUpdated
+        self.consecutiveFailures = consecutiveFailures
+        self.lastKnownStartCommand = lastKnownStartCommand
+    }
+
+    public var nextAction: NextAction {
+        switch state {
+        case .loading: return .none
+        case .running: return .none
+        case .unreachable:
+            return .runCommand(lastKnownStartCommand ?? "ocx start")
+        case .unauthorized: return .addAPIKey
+        case .degraded: return .retry
+        }
+    }
+
+    /// One normalized row per provider for the compact quota list.
+    public var quotaRows: [NormalizedQuota] {
+        quotas.map { $0.normalized() }
+    }
+
+    /// Whether the metrics section should render its empty copy. `nil` means unknown,
+    /// which renders em dashes instead.
+    public var usageIsEmpty: Bool? { usage?.isEmptyOrUnknown }
+
+    public func canToggle(_ provider: ProviderSummary) -> Bool {
+        provider.name != defaultProvider
+    }
+}
