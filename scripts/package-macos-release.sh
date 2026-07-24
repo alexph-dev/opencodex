@@ -49,6 +49,21 @@ executable="$app_bundle/Contents/MacOS/OpenCodexMenuBar"
 
 codesign --verify --deep --strict --verbose=2 "$app_bundle"
 
+# Report the Gatekeeper verdict rather than discovering it on a user's machine. An
+# ad-hoc build is expected to be rejected; that is documented, not a packaging failure.
+# A build that claimed a real identity and STILL fails assessment is a failure.
+if spctl --assess --type execute "$app_bundle" >/dev/null 2>&1; then
+  echo "==> Gatekeeper: accepted" >&2
+else
+  if [[ -n "${MACOS_SIGN_IDENTITY:-}" ]]; then
+    echo "Signed with $MACOS_SIGN_IDENTITY but Gatekeeper still rejects the bundle." >&2
+    echo "It likely needs notarization (notarytool) and a stapled ticket." >&2
+    exit 1
+  fi
+  echo "==> Gatekeeper: rejected (expected for an ad-hoc signature)." >&2
+  echo "    Users must right-click > Open on first launch; this is documented." >&2
+fi
+
 architectures="$(lipo -archs "$executable")"
 if [[ "$universal" == "1" ]]; then
   for required_arch in arm64 x86_64; do

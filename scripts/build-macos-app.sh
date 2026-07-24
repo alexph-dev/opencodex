@@ -22,12 +22,25 @@ mkdir -p "$output_root"
 output_root="$(cd "$output_root" && pwd)"
 app_bundle="$output_root/OpenCodex.app"
 
-# Refuse to write outside the intended output root.
-case "$app_bundle" in
-  "$output_root"/*.app) ;;
+# The build deletes whatever sits at $app_bundle, so the destination must be somewhere
+# this project owns. Comparing $app_bundle against $output_root proves nothing — both
+# come from the same variable, so pointing OUTPUT_DIR at /Applications would have passed
+# and then recursively removed a real app.
+allowed_root="$repo_root"
+if [[ -n "${TMPDIR:-}" ]]; then
+  allowed_tmp="$(cd "${TMPDIR%/}" 2>/dev/null && pwd || echo "")"
+else
+  allowed_tmp=""
+fi
+case "$output_root" in
+  "$allowed_root"/*) ;;
+  /tmp/*|/private/tmp/*) ;;
   *)
-    echo "Refusing to replace unexpected bundle path: $app_bundle" >&2
-    exit 1
+    if [[ -z "$allowed_tmp" || "$output_root" != "$allowed_tmp"/* ]]; then
+      echo "Refusing to build into '$output_root': it is outside the repository and the" >&2
+      echo "temp directory. Set OUTPUT_DIR to a path under $repo_root." >&2
+      exit 1
+    fi
     ;;
 esac
 
@@ -72,8 +85,27 @@ if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
   echo "Could not read a valid version from package.json: '$version'" >&2
   exit 1
 fi
+
+# CFBundleShortVersionString is the human-facing version and may carry a prerelease
+# suffix. CFBundleVersion may NOT: Apple restricts it to period-separated integers, so
+# writing "2.7.36-preview.1" there produces invalid metadata on every preview build.
+# Strip to the numeric core, and let CI append a monotonic build number when it has one.
+version_core="${version%%-*}"
+build_version="$version_core"
+if [[ -n "${MACOS_BUILD_NUMBER:-}" ]]; then
+  if [[ ! "$MACOS_BUILD_NUMBER" =~ ^[0-9]+$ ]]; then
+    echo "MACOS_BUILD_NUMBER must be a positive integer, got '$MACOS_BUILD_NUMBER'" >&2
+    exit 1
+  fi
+  build_version="$version_core.$MACOS_BUILD_NUMBER"
+fi
+if [[ ! "$build_version" =~ ^[0-9]+(\.[0-9]+)*$ ]]; then
+  echo "Computed CFBundleVersion is not period-separated integers: '$build_version'" >&2
+  exit 1
+fi
+
 plutil -replace CFBundleShortVersionString -string "$version" "$staged_app/Contents/Info.plist"
-plutil -replace CFBundleVersion            -string "$version" "$staged_app/Contents/Info.plist"
+plutil -replace CFBundleVersion            -string "$build_version" "$staged_app/Contents/Info.plist"
 
 # Icon: reuse the dashboard favicon rather than adding another binary asset to the repo.
 icon_source="$repo_root/gui/public/favicon.png"
@@ -90,11 +122,28 @@ for size in 16 32 128 256 512; do
 done
 iconutil -c icns "$iconset" -o "$staged_app/Contents/Resources/OpenCodex.icns"
 
-# Ad-hoc signature so Gatekeeper has a stable identity. CI may re-sign with a real one.
-codesign --force --sign - --timestamp=none "$staged_app"
+# Signing.
+#
+# MACOS_SIGN_IDENTITY selects a Developer ID Application certificate and enables the
+# hardened runtime, which is what notarization requires. Without it the bundle is
+# ad-hoc signed: structurally valid, but `spctl --assess` rejects it and a downloaded
+# copy shows the "cannot be opened because the developer cannot be verified" dialog.
+#
+# The project has no Developer ID certificate today (that needs a paid Apple Developer
+# account), so ad-hoc is the shipped default and the docs must tell users the
+# right-click-Open path rather than pretend the download runs cleanly.
+if [[ -n "${MACOS_SIGN_IDENTITY:-}" ]]; then
+  codesign --force --deep --options runtime --timestamp \
+    --sign "$MACOS_SIGN_IDENTITY" "$staged_app"
+  echo "==> Signed with $MACOS_SIGN_IDENTITY (hardened runtime)"
+else
+  codesign --force --sign - --timestamp=none "$staged_app"
+  echo "==> Ad-hoc signed (no MACOS_SIGN_IDENTITY): Gatekeeper will require the" >&2
+  echo "    right-click-Open path on first launch." >&2
+fi
 
 rm -rf "$app_bundle"
 mv "$staged_app" "$app_bundle"
 
-echo "==> Built $app_bundle (version $version)"
+echo "==> Built $app_bundle (version $version, build $build_version)"
 lipo -archs "$app_bundle/Contents/MacOS/OpenCodexMenuBar"

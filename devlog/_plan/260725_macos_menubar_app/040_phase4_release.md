@@ -286,11 +286,13 @@ Constraints honoured:
 
 **A pipeline subtlety cost a real debugging pass.** The archive assertion was originally
 `unzip -Z1 "$archive" | grep -Fqx '…'`. Under `set -o pipefail`, `grep -q` exits as soon
-as it matches, `unzip` then dies on SIGPIPE, and the pipeline reports failure *even
-though the match succeeded* — so a correctly packaged archive was rejected with
-"does not contain the OpenCodex executable". Capturing the listing into a variable first
-and matching against a here-string fixes it. The assertion is worth keeping; it just has
-to be written so it cannot fail on success.
+as it matches; `unzip` *can* then receive SIGPIPE while still writing, and the pipeline
+reports failure even though the match succeeded — which is how a correctly packaged
+archive got rejected with "does not contain the OpenCodex executable". It is a race, not
+a certainty: a reviewer re-running the old pipeline against the same archive saw it exit
+0. That is precisely why it is worth fixing rather than dismissing — an assertion that
+fails intermittently on success is worse than one that fails consistently. Capturing the
+listing into a variable first and matching against a here-string removes the pipeline.
 
 **`--sequesterRsrc` adds `__MACOSX/` entries** alongside the real paths, which is
 harmless for an exact-match assertion but surprising when reading the listing by eye.
@@ -317,11 +319,43 @@ UNIVERSAL=1 bash scripts/build-macos-app.sh
 The unpack-and-launch step is the one that matters: it is the path a user actually takes,
 and it is the one that would expose a `zip`-corrupted signature.
 
+## Signing and Gatekeeper: what actually ships
+
+The asset is **ad-hoc signed**, and `spctl --assess --type execute` rejects it. That is
+not an oversight to paper over — Developer ID signing plus notarization requires a paid
+Apple Developer account, and this project has no certificate today:
+
+```text
+security find-identity -v -p codesigning | grep -c "Developer ID Application"  -> 0
+grep -rn "APPLE_\|NOTARY\|DEVELOPER_ID" .github/workflows/                     -> none
+```
+
+So the scripts are built to be honest about it and ready for the day that changes:
+
+- `MACOS_SIGN_IDENTITY` (optional) switches `build-macos-app.sh` to
+  `codesign --options runtime --timestamp --sign "$identity"`, which is what
+  notarization requires. Unset, it ad-hoc signs and says so on stderr.
+- `package-macos-release.sh` runs `spctl --assess` and reports the verdict. An ad-hoc
+  rejection is expected and non-fatal; a build that claimed a real identity and *still*
+  fails assessment exits non-zero, because that means notarization is missing.
+- `release.yml` passes `MACOS_SIGN_IDENTITY` from secrets, so adding the certificate is
+  a configuration change rather than a code change. Adding those secrets is a
+  security-reviewed change of its own.
+
+**Consequence for Phase 5 docs:** the Gatekeeper section is not optional. Users will see
+"cannot be opened because the developer cannot be verified" and need the right-click →
+Open path. Documenting that honestly is better than shipping an asset that appears
+broken.
+
 ## Accept criteria
 
 1. `bun run build:macos` produces a launchable `dist/macos/OpenCodex.app`.
 2. `bun run package:macos` produces zip + `.sha256`, with the content assertion passing.
 3. `lipo -archs` shows `arm64` locally; both arches asserted in CI.
+   3a. `CFBundleVersion` is period-separated integers even for preview versions
+       (`2.7.36-preview.1` → `2.7.36`, or `2.7.36.<run>` with `MACOS_BUILD_NUMBER`).
+   3b. `OUTPUT_DIR` outside the repository or temp is refused, since the build deletes
+       whatever sits at the destination.
 4. `UNIVERSAL=1` under Command Line Tools fails with the explanatory message, not a
    linker error.
 5. The build script runs end to end on a clean checkout under `set -euo pipefail`, with
