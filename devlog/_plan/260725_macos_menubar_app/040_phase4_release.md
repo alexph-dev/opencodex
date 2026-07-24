@@ -420,7 +420,8 @@ broken.
        appending a fourth component, which Apple ignores.
    3b. `OUTPUT_DIR` outside the repository or temp is refused, since the build deletes
        whatever sits at the destination. Covered by `tests/macos-build-script.test.ts`,
-       **8 cases**, each asserting that a refused path creates nothing:
+       **8 cases** — six refusals, each asserting that nothing is created, and two
+       acceptances:
 
        1. a sibling-of-repository path
        2. an unresolved `..` traversal
@@ -431,7 +432,7 @@ broken.
        7. a repository path (accepted)
        8. a temp path (accepted)
 
-       Two harness details are load-bearing, both learned by getting them wrong:
+       Three harness details are load-bearing, each learned by getting it wrong:
 
        - The outside path is a **sibling of the repository**, not anything under `$HOME`.
          Other suites replace `HOME` with a temp directory, and temp is a permitted root,
