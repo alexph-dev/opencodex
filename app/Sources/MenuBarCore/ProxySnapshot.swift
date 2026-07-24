@@ -86,6 +86,13 @@ public struct ProxySnapshot: Equatable, Sendable {
     /// Remembered from the last successful health read, so a stopped proxy can still
     /// tell the user the right start command for their install.
     public var lastKnownStartCommand: String?
+    /// The proxy's own remediation hint (for example `ocx service install`). Displayed
+    /// as selectable text, never executed.
+    public var recommendedCommand: String?
+    /// Whether a section has actually been read, so "not fetched yet" and "the proxy
+    /// reported none" render differently.
+    public var providersLoaded: Bool
+    public var quotasLoaded: Bool
 
     public init(
         state: ProxyState = .loading,
@@ -96,7 +103,10 @@ public struct ProxySnapshot: Equatable, Sendable {
         defaultProvider: String? = nil,
         lastUpdated: Date? = nil,
         consecutiveFailures: Int = 0,
-        lastKnownStartCommand: String? = nil
+        lastKnownStartCommand: String? = nil,
+        recommendedCommand: String? = nil,
+        providersLoaded: Bool = false,
+        quotasLoaded: Bool = false
     ) {
         self.state = state
         self.endpoint = endpoint
@@ -107,7 +117,27 @@ public struct ProxySnapshot: Equatable, Sendable {
         self.lastUpdated = lastUpdated
         self.consecutiveFailures = consecutiveFailures
         self.lastKnownStartCommand = lastKnownStartCommand
+        self.recommendedCommand = recommendedCommand
+        self.providersLoaded = providersLoaded
+        self.quotasLoaded = quotasLoaded
     }
+
+    /// Whether the data sections are worth rendering at all.
+    ///
+    /// `degraded` keeps them: the plan requires stale-but-labelled over blank, because a
+    /// user who can still see last-known numbers with an explicit age is better served
+    /// than one staring at an empty panel.
+    public var showsData: Bool {
+        switch state {
+        case .running: return true
+        case .degraded: return lastUpdated != nil
+        case .loading, .unreachable, .unauthorized: return false
+        }
+    }
+
+    /// True once the proxy has been read at least once, so `loading` can show skeletons
+    /// rather than empty copy.
+    public var hasEverLoaded: Bool { lastUpdated != nil }
 
     public var nextAction: NextAction {
         switch state {

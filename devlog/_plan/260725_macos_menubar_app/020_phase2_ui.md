@@ -281,6 +281,26 @@ Build, launch, open the popover, `screencapture` the region, read it back with
 colour-only meaning, numbers abbreviated and tabular, dark and light both legible. Fix
 what the screenshot shows, then re-verify. Code review alone does not close this phase.
 
+## Code-review corrections (folded before B closed)
+
+An adversarial review that rendered every state returned FAIL on 9 findings. Each was
+reproduced visually or with a stub before being folded:
+
+| Finding | Correction |
+| --- | --- |
+| `Stop proxy` fired an unconfirmed destructive stop | Confirmation sheet naming the concrete consequence, since `/api/stop` also stops launchd |
+| Escape did not close the popover; the accessory app never took key focus | `NSApp.activate` on open, explicit first responder, plus a scoped local key monitor installed on open and removed on close |
+| Loading, unauthorized, and degraded were not really implemented | Skeleton rows and disabled chrome while loading; an actual `Add key…` button; `Retry` plus a staleness age for degraded, which now retains its last-known data |
+| Popover open forced aggregation every time, while periodic refreshes fetched on-open data | Split into on-open reads (providers, config) and interval-gated aggregation (usage, quotas) |
+| Overlapping refreshes could interleave, outlive a close, and mark stale data fresh | One in-flight cycle, a generation counter that discards superseded results, close bumps the generation, and only a fully successful aggregation advances the freshness timestamp |
+| The at-risk notch did not render at all, so protected and at-risk looked identical | Notch carved with even-odd winding instead of a `.clear` composite that silently did nothing; verified with a rendered glyph sheet |
+| `recommendedCommand` was decoded but never shown, and providers had no section | Recommended command shown as selectable text; a provider summary line with its own empty copy |
+| Popover height was uncapped with no scroll region | Fixed header and actions with a scrolling body, capped at 480pt, scrollers only when content actually overflows |
+| Polling tests asserted four constants and nothing else | `PollingSuite`: gating, cadence, backoff, recovery, degraded retention, and observer delivery against a stubbed transport |
+
+Also folded: `UIProbe` now captures with `CGWindowListCreateImage` rather than `Process`,
+so nothing under `app/` constructs a subprocess (`030` security rule).
+
 ## Accept criteria
 
 1. Menu bar icon renders as a template image and changes with state.

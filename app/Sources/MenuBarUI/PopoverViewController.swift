@@ -1,63 +1,90 @@
 import AppKit
 import MenuBarCore
 
-/// The popover body: one scroll-free column ordered by urgency.
+/// The popover body: one column ordered by urgency.
 ///
 /// Deliberately not a tab bar. A menu bar popover is a glance surface, and tabs would put
 /// the answer to "is it fine?" one click away three times out of four.
+///
+/// Fixed header and action row with a scrolling middle: the quota and provider sections
+/// grow with the user's configuration, and an uncapped popover would eventually run off
+/// the screen.
 public final class PopoverViewController: NSViewController {
-    public override init(nibName: NSNib.Name?, bundle: Bundle?) { super.init(nibName: nibName, bundle: bundle) }
+    public override init(nibName: NSNib.Name?, bundle: Bundle?) {
+        super.init(nibName: nibName, bundle: bundle)
+    }
+
     public required init?(coder: NSCoder) { nil }
 
+    /// The popover never grows past this; the variable middle scrolls instead.
+    private static let maxHeight: CGFloat = 480
+
+    // Fixed chrome
     private let header = StatusHeaderView()
+    private let dashboardButton = NSButton()
+    private let stopButton = NSButton()
+    private let overflowButton = NSButton()
+    /// State-specific call to action: "Add key…" or "Retry".
+    private let primaryButton = NSButton()
+
+    // Scrolling body
+    private let scrollView = NSScrollView()
+    private let body = NSStackView()
     private let metrics = MetricsView()
     private let sparkline = SparklineView()
     private let quotaStack = NSStackView()
     private let quotaEmpty = makeLabel("No provider quota sources connected.", font: Theme.caption, color: Theme.muted)
-    private let actionLabel = makeLabel("", font: Theme.caption, color: Theme.muted)
+    private let providerSummary = makeLabel("", font: Theme.caption, color: Theme.muted)
+    private let skeleton = SkeletonView()
+    private let guidanceLabel: NSTextField = {
+        let field = makeLabel("", font: Theme.caption, color: Theme.muted)
+        // Guidance is a sentence, not a stat: let it wrap instead of truncating away
+        // the half that explains what to do.
+        field.lineBreakMode = .byWordWrapping
+        field.maximumNumberOfLines = 3
+        field.preferredMaxLayoutWidth = Theme.width - Theme.gutter * 2
+        return field
+    }()
     private let commandField = NSTextField(labelWithString: "")
-    private let dashboardButton = NSButton()
-    private let stopButton = NSButton()
-    private let overflowButton = NSButton()
     private let metricsSeparator = makeSeparator()
     private let quotaSeparator = makeSeparator()
 
     public var onDashboard: (() -> Void)?
     public var onStop: (() -> Void)?
     public var onQuit: (() -> Void)?
+    public var onRefresh: (() -> Void)?
+    /// Invoked by the state-specific primary button.
+    public var onPrimaryAction: (() -> Void)?
 
     private var snapshot: ProxySnapshot?
+    private var scrollHeight: NSLayoutConstraint?
 
     public override func loadView() {
-        let root = NSView(frame: NSRect(x: 0, y: 0, width: Theme.width, height: 260))
+        configureControls()
 
-        quotaStack.orientation = .vertical
-        quotaStack.alignment = .leading
-        quotaStack.spacing = Theme.tightGap
+        body.orientation = .vertical
+        body.alignment = .leading
+        body.spacing = Theme.rowGap
+        body.setViews(
+            [skeleton, metrics, sparkline, metricsSeparator, quotaStack, quotaEmpty,
+             providerSummary, quotaSeparator, guidanceLabel, commandField],
+            in: .top
+        )
+        body.translatesAutoresizingMaskIntoConstraints = false
 
-        configureButtons()
-        commandField.font = Theme.numericSmall
-        commandField.textColor = Theme.text
-        commandField.isSelectable = true
-        commandField.isBordered = false
-        commandField.backgroundColor = .clear
+        scrollView.documentView = body
+        scrollView.hasVerticalScroller = true
+        scrollView.autohidesScrollers = true
+        scrollView.drawsBackground = false
+        scrollView.borderType = .noBorder
+        scrollView.translatesAutoresizingMaskIntoConstraints = false
 
-        let actions = makeRow([dashboardButton, stopButton, NSView(), overflowButton])
+        let actions = NSStackView(views: [dashboardButton, stopButton, primaryButton, NSView(), overflowButton])
+        actions.orientation = .horizontal
+        actions.spacing = Theme.rowGap
         actions.alignment = .centerY
 
-        let column = NSStackView(views: [
-            header,
-            makeSeparator(),
-            metrics,
-            sparkline,
-            metricsSeparator,
-            quotaStack,
-            quotaEmpty,
-            quotaSeparator,
-            actionLabel,
-            commandField,
-            actions,
-        ])
+        let column = NSStackView(views: [header, makeSeparator(), scrollView, actions])
         column.orientation = .vertical
         column.alignment = .leading
         column.spacing = Theme.rowGap
@@ -66,31 +93,31 @@ public final class PopoverViewController: NSViewController {
             bottom: Theme.gutter, right: Theme.gutter
         )
         column.translatesAutoresizingMaskIntoConstraints = false
+
+        let root = NSView(frame: NSRect(x: 0, y: 0, width: Theme.width, height: 300))
         root.addSubview(column)
 
+        let contentWidth = Theme.width - Theme.gutter * 2
         NSLayoutConstraint.activate([
             column.topAnchor.constraint(equalTo: root.topAnchor),
             column.leadingAnchor.constraint(equalTo: root.leadingAnchor),
             column.trailingAnchor.constraint(equalTo: root.trailingAnchor),
             column.bottomAnchor.constraint(equalTo: root.bottomAnchor),
             root.widthAnchor.constraint(equalToConstant: Theme.width),
+            header.widthAnchor.constraint(equalToConstant: contentWidth),
+            actions.widthAnchor.constraint(equalToConstant: contentWidth),
+            scrollView.widthAnchor.constraint(equalToConstant: contentWidth),
+            body.widthAnchor.constraint(equalToConstant: contentWidth),
         ])
 
-        // Let the column drive the height so hidden sections actually shrink the
-        // popover. Without this the view keeps its initial 260pt and a stopped proxy
-        // renders a large empty void under the status line.
-        column.setHuggingPriority(.required, for: .vertical)
-        column.setContentCompressionResistancePriority(.required, for: .vertical)
-
-        for view in [header, metrics, sparkline, quotaStack, actions] {
-            view.translatesAutoresizingMaskIntoConstraints = false
-            view.widthAnchor.constraint(equalTo: column.widthAnchor, constant: -Theme.gutter * 2).isActive = true
-        }
+        let heightConstraint = scrollView.heightAnchor.constraint(equalToConstant: 120)
+        heightConstraint.isActive = true
+        scrollHeight = heightConstraint
 
         view = root
     }
 
-    private func configureButtons() {
+    private func configureControls() {
         for (button, title) in [(dashboardButton, "Dashboard"), (stopButton, "Stop proxy")] {
             button.title = title
             button.bezelStyle = .rounded
@@ -101,6 +128,13 @@ public final class PopoverViewController: NSViewController {
         dashboardButton.action = #selector(dashboardTapped)
         stopButton.action = #selector(stopTapped)
 
+        primaryButton.bezelStyle = .rounded
+        primaryButton.controlSize = .small
+        primaryButton.font = Theme.caption
+        primaryButton.target = self
+        primaryButton.action = #selector(primaryTapped)
+        primaryButton.isHidden = true
+
         overflowButton.title = "···"
         overflowButton.bezelStyle = .rounded
         overflowButton.controlSize = .small
@@ -108,37 +142,58 @@ public final class PopoverViewController: NSViewController {
         overflowButton.target = self
         overflowButton.action = #selector(overflowTapped)
         overflowButton.setAccessibilityLabel("More actions")
+
+        quotaStack.orientation = .vertical
+        quotaStack.alignment = .leading
+        quotaStack.spacing = Theme.tightGap
+
+        commandField.font = Theme.numericSmall
+        commandField.textColor = Theme.text
+        commandField.isSelectable = true
+        commandField.isBordered = false
+        commandField.drawsBackground = false
     }
 
     public func apply(_ snapshot: ProxySnapshot) {
         self.snapshot = snapshot
         header.apply(snapshot)
-        metrics.apply(snapshot)
-        sparkline.apply(snapshot)
-        applyQuotas(snapshot)
-        applyAction(snapshot)
 
-        // Metrics and quotas are meaningless when the proxy is not answering.
-        let live = snapshot.state.isRunning
-        metrics.isHidden = !live
-        metricsSeparator.isHidden = !live
-        quotaSeparator.isHidden = !live
-        if !live {
+        let showsData = snapshot.showsData
+        let isLoading = !snapshot.hasEverLoaded && snapshot.state == .loading
+
+        // Loading shows structure, not empty copy: the shape of the answer is already
+        // known, only the values are missing.
+        skeleton.isHidden = !isLoading
+
+        metrics.isHidden = !showsData
+        metricsSeparator.isHidden = !showsData
+        quotaSeparator.isHidden = !showsData
+        if showsData {
+            metrics.apply(snapshot)
+            sparkline.apply(snapshot)
+            applyQuotas(snapshot)
+            applyProviders(snapshot)
+        } else {
             sparkline.isHidden = true
             quotaStack.isHidden = true
             quotaEmpty.isHidden = true
+            providerSummary.isHidden = true
         }
-        stopButton.isEnabled = live
 
-        view.layoutSubtreeIfNeeded()
-        preferredContentSize = NSSize(width: Theme.width, height: view.fittingSize.height)
+        applyGuidance(snapshot)
+        applyActions(snapshot, isLoading: isLoading)
+        resize()
     }
 
     private func applyQuotas(_ snapshot: ProxySnapshot) {
-        for view in quotaStack.arrangedSubviews { quotaStack.removeArrangedSubview(view); view.removeFromSuperview() }
+        for view in quotaStack.arrangedSubviews {
+            quotaStack.removeArrangedSubview(view)
+            view.removeFromSuperview()
+        }
         let rows = snapshot.quotaRows
         quotaStack.isHidden = rows.isEmpty
-        quotaEmpty.isHidden = !(rows.isEmpty && snapshot.state.isRunning)
+        // "Not fetched yet" and "the proxy reported none" are different facts.
+        quotaEmpty.isHidden = !(rows.isEmpty && snapshot.quotasLoaded)
         for quota in rows {
             let row = QuotaRowView(quota: quota)
             row.translatesAutoresizingMaskIntoConstraints = false
@@ -147,51 +202,128 @@ public final class PopoverViewController: NSViewController {
         }
     }
 
-    private func applyAction(_ snapshot: ProxySnapshot) {
-        switch snapshot.nextAction {
-        case .none:
-            actionLabel.isHidden = true
-            commandField.isHidden = true
-        case .runCommand(let command):
-            actionLabel.isHidden = false
-            actionLabel.stringValue = "Start it again with:"
-            commandField.isHidden = false
-            commandField.stringValue = command
-            commandField.setAccessibilityLabel("Start command: \(command)")
-        case .addAPIKey:
-            actionLabel.isHidden = false
-            actionLabel.stringValue = "Add an API key in the dashboard to continue."
-            commandField.isHidden = true
-        case .retry:
-            actionLabel.isHidden = false
-            let age = Format.age(snapshot.lastUpdated)
-            actionLabel.stringValue = "Showing data from \(age). Retrying automatically."
-            commandField.isHidden = true
+    private func applyProviders(_ snapshot: ProxySnapshot) {
+        guard snapshot.providersLoaded else {
+            providerSummary.isHidden = true
+            return
+        }
+        providerSummary.isHidden = false
+        if snapshot.providers.isEmpty {
+            providerSummary.stringValue = "No providers configured."
+        } else {
+            let enabled = snapshot.providers.filter(\.isEnabled).count
+            providerSummary.stringValue = "\(enabled) of \(snapshot.providers.count) providers enabled"
         }
     }
 
+    /// Guidance text plus any command the user should run. Commands are shown as
+    /// selectable text; the app never executes them.
+    private func applyGuidance(_ snapshot: ProxySnapshot) {
+        var guidance: String?
+        var command: String?
+
+        switch snapshot.nextAction {
+        case .none:
+            // A running-but-at-risk proxy still has advice worth surfacing.
+            if case .running = snapshot.state, let recommended = snapshot.recommendedCommand {
+                guidance = "Recommended:"
+                command = recommended
+            }
+        case .runCommand(let value):
+            guidance = "Start it again with:"
+            command = value
+        case .addAPIKey:
+            guidance = "This proxy is bound to a non-loopback address and needs a key."
+        case .retry:
+            guidance = "Showing data from \(Format.age(snapshot.lastUpdated)). Retrying automatically."
+        }
+
+        guidanceLabel.isHidden = guidance == nil
+        guidanceLabel.stringValue = guidance ?? ""
+        commandField.isHidden = command == nil
+        commandField.stringValue = command ?? ""
+        if let command {
+            commandField.setAccessibilityLabel("Command to run: \(command)")
+        }
+    }
+
+    private func applyActions(_ snapshot: ProxySnapshot, isLoading: Bool) {
+        // Nothing is actionable before the first read completes.
+        dashboardButton.isEnabled = !isLoading
+        overflowButton.isEnabled = !isLoading
+        stopButton.isEnabled = snapshot.state.isRunning
+        stopButton.isHidden = !snapshot.state.isRunning
+
+        switch snapshot.nextAction {
+        case .addAPIKey:
+            primaryButton.isHidden = false
+            primaryButton.title = "Add key…"
+            primaryButton.keyEquivalent = "\r"
+        case .retry:
+            primaryButton.isHidden = false
+            primaryButton.title = "Retry"
+            primaryButton.keyEquivalent = "\r"
+        case .none, .runCommand:
+            primaryButton.isHidden = true
+            primaryButton.keyEquivalent = ""
+        }
+    }
+
+    private func resize() {
+        view.layoutSubtreeIfNeeded()
+        let bodyHeight = ceil(body.fittingSize.height)
+        // Chrome is the header, separator, action row, and insets.
+        let chrome = ceil(header.fittingSize.height) + Theme.gutter * 2 + Theme.rowGap * 3 + 28
+        let natural = chrome + bodyHeight
+        let capped = min(Self.maxHeight, natural)
+        // Scrollers appear only when the content genuinely overflows; a scroll bar on a
+        // three-line loading state reads as a broken layout.
+        let overflowing = natural > Self.maxHeight
+        scrollView.hasVerticalScroller = overflowing
+        scrollHeight?.constant = max(0, capped - chrome)
+        preferredContentSize = NSSize(width: Theme.width, height: max(96, capped))
+    }
+
+    // MARK: - Actions
+
     @objc private func dashboardTapped() { onDashboard?() }
     @objc private func stopTapped() { onStop?() }
+    @objc private func primaryTapped() { onPrimaryAction?() }
+    @objc private func refreshTapped() { onRefresh?() }
+    @objc private func quitTapped() { onQuit?() }
 
     @objc private func overflowTapped() {
         let menu = NSMenu()
         menu.addItem(withTitle: "Refresh", action: #selector(refreshTapped), keyEquivalent: "r").target = self
+        menu.addItem(withTitle: "Open dashboard", action: #selector(dashboardTapped), keyEquivalent: "").target = self
         menu.addItem(.separator())
         menu.addItem(withTitle: "Quit OpenCodex", action: #selector(quitTapped), keyEquivalent: "q").target = self
         menu.popUp(positioning: nil, at: NSPoint(x: 0, y: overflowButton.bounds.height + 4), in: overflowButton)
     }
 
-    @objc private func refreshTapped() { onRefresh?() }
-    @objc private func quitTapped() { onQuit?() }
+    /// AppKit routes Escape here for the whole responder chain, which `keyDown` does not
+    /// reliably receive inside a popover.
+    public override func cancelOperation(_ sender: Any?) {
+        view.window?.performClose(nil)
+    }
+}
 
-    public var onRefresh: (() -> Void)?
+/// Loading structure: grey bars where values will appear, so the first paint shows the
+/// shape of the answer instead of empty space or a spinner.
+final class SkeletonView: NSView {
+    override var intrinsicContentSize: NSSize {
+        NSSize(width: NSView.noIntrinsicMetric, height: 84)
+    }
 
-    public override func keyDown(with event: NSEvent) {
-        // Escape closes, per the keyboard contract.
-        if event.keyCode == 53 {
-            view.window?.close()
-            return
+    override func draw(_ dirtyRect: NSRect) {
+        Theme.raised.setFill()
+        let widths: [CGFloat] = [72, 0, 96, 140, 120, 110]
+        var y = bounds.maxY - 12
+        for width in widths {
+            guard width > 0 else { y -= 8; continue }
+            let rect = NSRect(x: 0, y: y, width: width, height: 9)
+            NSBezierPath(roundedRect: rect, xRadius: 3, yRadius: 3).fill()
+            y -= 15
         }
-        super.keyDown(with: event)
     }
 }

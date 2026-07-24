@@ -75,14 +75,18 @@ final class ProbeDelegate: NSObject, NSApplicationDelegate {
     @MainActor func capture() {
         guard let w = window else { return }
         let tag = ProcessInfo.processInfo.environment["PROBE_TAG"] ?? "light"
-        // Capture the real window through the window server: caching the view's bitmap
-        // rep skips text rendering, which produced a screenshot with no labels at all.
+        // CGWindowListCreateImage rather than shelling out to screencapture: nothing
+        // under app/ may construct a Process (030 security rule). The bitmap-rep path
+        // is not an option either — it skips text rendering entirely.
         let id = CGWindowID(w.windowNumber)
-        let task = Process()
-        task.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
-        task.arguments = ["-x", "-o", "-l", String(id), "/tmp/popover-\(tag).png"]
-        try? task.run()
-        task.waitUntilExit()
+        if let cg = CGWindowListCreateImage(
+            .null, .optionIncludingWindow, id, [.boundsIgnoreFraming, .bestResolution]
+        ) {
+            let rep = NSBitmapImageRep(cgImage: cg)
+            if let png = rep.representation(using: .png, properties: [:]) {
+                try? png.write(to: URL(fileURLWithPath: "/tmp/popover-\(tag).png"))
+            }
+        }
         NSApp.terminate(nil)
     }
 }

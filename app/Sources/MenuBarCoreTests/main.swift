@@ -10,5 +10,6 @@ ModelDecodingSuite.run(runner)
 FormattingSuite.run(runner)
 TransportSuite.run(runner)
 SnapshotStateSuite.run(runner)
+PollingSuite.run(runner)
 
 exit(runner.summarize())

@@ -8,6 +8,7 @@ let package = Package(
         .executable(name: "OpenCodexMenuBar", targets: ["MenuBarApp"]),
         .executable(name: "MenuBarCoreTests", targets: ["MenuBarCoreTests"]),
         .executable(name: "UIProbe", targets: ["UIProbe"]),
+        .executable(name: "IconProbe", targets: ["IconProbe"]),
     ],
     targets: [
         .target(name: "MenuBarCore", path: "Sources/MenuBarCore"),
@@ -28,6 +29,7 @@ let package = Package(
             path: "Sources/MenuBarCoreTests"
         ),
         .executableTarget(name: "UIProbe", dependencies: ["MenuBarCore", "MenuBarUI"], path: "Sources/UIProbe"),
+        .executableTarget(name: "IconProbe", dependencies: ["MenuBarCore", "MenuBarUI"], path: "Sources/IconProbe"),
     ],
     swiftLanguageVersions: [.v5]
 )
