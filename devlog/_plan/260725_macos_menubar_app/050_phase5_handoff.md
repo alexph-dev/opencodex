@@ -55,6 +55,10 @@ subprocess calls to the HTTP management API, because the CLI path required exten
 changes — and because `/api/usage` and `/api/provider-quotas` already return richer data
 with no proxy change at all.
 
+Also states the cost of that choice honestly (`001` §4.2): the CLI transport could run
+`ocx start`, and HTTP cannot. The maintainer app ships **Stop proxy** rather than pretend
+to restart.
+
 ### To #421 (genglintong)
 
 Names what was adopted: HTTP management-API transport, `runtime-port.json` discovery with
@@ -62,16 +66,27 @@ the 10100 fallback, keeping the API token out of the rendering layer, skipping a
 the proxy has no `apiKeys` configured, the usage/health/status/activity information set,
 and tabular-numeral stat treatment.
 
-States plainly what changed and why: Tauri was not adopted because the branch shipped no
-distribution path (`.github/` untouched, DMG/Homebrew listed as a non-goal), because
-`src-tauri/target/**` was committed with developer-absolute paths that fail
-`bun run privacy:scan`, and because `macOSPrivateApi: true` is a notarization and
-App-Store-rejection risk that `NSPopover` avoids through public API. The four-tab layout
-became a single scroll-free column so the primary question — "is it running?" — is
-answered without a click.
+**Must be written against head `049ef2ac`, not the head the bots reviewed.** The
+contributor's commit "address all Codex review findings (5 P1 + 14 P2)" removed the
+committed `src-tauri/target/**` tree; `001` §2.1 verifies zero matching paths remain. The
+comment explicitly acknowledges that fix. Repeating the stale defect would be factually
+wrong and would misrepresent a contributor who responded to review properly.
+
+The three remaining reasons Tauri was not adopted, and nothing else: no repository CI or
+release attachment (`.github/` untouched, so no user can download a build), a materially
+heavier build stack for a project whose premise is a single Bun process, and
+`macOSPrivateApi: true` — a notarization and App-Store-rejection risk that `NSPopover`
+avoids through public API.
+
+The four-tab layout became a single scroll-free column so the primary question — "is it
+running?" — is answered without a click.
 
 Both comments state that the work is not discarded, point at this devlog unit, and invite
 review of the maintainer branch.
+
+**Pre-send check:** re-read both PR heads immediately before posting. A closing comment
+that describes a stale head is the one failure mode that cannot be corrected after the
+fact, because the PR is closed by the same action.
 
 ## Push
 
@@ -100,10 +115,20 @@ feat(release): build and package the macOS companion
 docs(macos): document the companion and Gatekeeper first launch
 ```
 
+## Devlog path hygiene
+
+`scripts/privacy-scan.ts` excludes `devlog/`, so these documents are **not** covered by
+the credential scan. That is a reason for more care, not less: absolute developer paths
+(`/Users/<name>/...`) must not appear in tracked docs. Use repo-relative paths, or
+`<worktree>` as a placeholder, and redact home directories when quoting evidence from
+another contributor's machine.
+
 ## Accept criteria
 
 1. Guide published in five locales, linked from the sidebar, no locale contradictions.
 2. `README.md`, `AGENTS.md`, `structure/00_overview.md` mention `app/`.
-3. #387 and #421 `CLOSED` with the comments above.
+3. #387 and #421 `CLOSED` with the comments above, each verified against the PR's head
+   commit at the moment of posting.
 4. `feat/macos-app` pushed; remote SHA equals local `HEAD`.
 5. `bun run typecheck`, `bun run test`, `bun run privacy:scan` green on the final tree.
+6. No absolute developer home path in any tracked file, including `devlog/`.

@@ -50,11 +50,29 @@ validators. Adding any second field would silently change the request class.
 
 ## `ActionCoordinator.swift`
 
-### Restart — the drain problem
+### There is no restart. There is only stop.
 
-`002` §4 records that `/api/stop` answers `200` **before** draining
-(`src/lib/process-control.ts:77`). Treating `200` as "stopped" would make the UI lie for
-several seconds.
+This was the single biggest correction from the Phase-0 audit, and it is worth stating
+plainly because an earlier draft of this document got it wrong.
+
+`src/server/management-api.ts:136-147` — `/api/stop` calls `stopServiceIfInstalled()`
+**before** responding. That call exists precisely so launchd cannot respawn the proxy.
+So a service-managed proxy does not come back on its own, and there is no start endpoint
+to call. A control labelled "Restart" would therefore be a lie in every configuration.
+
+**Decision: the app ships `Stop proxy`, never `Restart`.** After a successful stop, the
+UI enters the `unreachable` state (`020`) whose next action shows the exact command to
+start it again (`ocx start`, or `ocx service start` when a service is installed) as
+selectable text. The app does not spawn processes the user did not ask for, and it does
+not claim a capability the API does not have.
+
+This also removes the `serviceManaged` branch an earlier draft assumed, and with it the
+`StartupHealth.serviceInstalled` / `serviceEnabled` fields that `010` never declared.
+
+### The drain problem
+
+`002` §4 also records that `/api/stop` answers `200` **before** draining. Treating `200`
+as "stopped" would make the UI lie for several seconds.
 
 ```swift
 public enum ActionOutcome: Equatable, Sendable {
@@ -63,42 +81,21 @@ public enum ActionOutcome: Equatable, Sendable {
     case requiresManualStart     // stop confirmed; the app cannot relaunch it
 }
 
-public func restart() async -> ActionOutcome {
+public func stopProxy() async -> ActionOutcome {
     do { try await client.stop() } catch { return .failed("Could not reach the proxy to stop it.") }
 
     // Poll until the port stops answering, up to 10s, before claiming anything.
     let deadline = Date().addingTimeInterval(10)
     while Date() < deadline {
         try? await Task.sleep(for: .milliseconds(500))
-        if await !client.isReachable() { return await waitForRestart() }
+        if await !client.isReachable() { return .requiresManualStart }
     }
     return .failed("The proxy did not stop within 10 seconds.")
 }
 ```
 
-### The honesty problem with "Restart"
-
-The management API can stop the proxy. **It cannot start one** — there is no start
-endpoint, and by scope we are not adding one. A button labelled "Restart" that can only
-stop is exactly the "fake completion" tell `003` §6 bans.
-
-Two options were considered:
-
-1. Shell out to `ocx start` (what PR #387 does via `OcxClient.perform`).
-2. Label the control truthfully and let the service supervisor do its job.
-
-**Decision: option 2 for the default path, with option 1 available only when a
-service-managed proxy is detected.** `/api/startup-health` already reports
-`serviceInstalled`, `serviceRunning`, and `serviceEnabled` (`002` §3). When
-`serviceInstalled && serviceEnabled`, launchd restarts the proxy on its own, so "Restart"
-is genuinely a restart and the app polls until it comes back. When no service is
-installed, the button is labelled **"Stop proxy"** and the resulting state offers the
-exact command to start it again. The app does not silently spawn processes the user did
-not ask for.
-
-```swift
-var restartLabel: String { health.serviceManaged ? "Restart" : "Stop proxy" }
-```
+`requiresManualStart` is the honest success case: the stop is confirmed, and the app
+says so while telling the user how to bring it back.
 
 ### Provider toggle — the default-provider trap
 
@@ -109,14 +106,18 @@ Per `dev-uiux-design` UX-LAZY-01, firing a request guaranteed to fail is not acc
 The toggle is disabled up front with an explanatory tooltip:
 
 ```swift
-let isDefault = provider.name == settings.defaultProvider
+let isDefault = provider.name == config.defaultProvider
 toggle.isEnabled = !isDefault
 toggle.toolTip = isDefault
     ? "This is the default provider. Choose another default in the dashboard first."
     : nil
 ```
 
-`/api/settings` supplies `defaultProvider`, so no extra call is needed.
+**`defaultProvider` comes from `GET /api/config`, not `/api/settings`.** The audit
+verified the live `/api/settings` key set is exactly `codexAutoStart`, `port`,
+`hostname`, `streamMode`, `startupHealth`, `codexRuntime` — no `defaultProvider`.
+`/api/config` returns it (`"defaultProvider": "openai"` live). `010` adds a
+`ProxyConfigSummary` model and `config()` client method for this.
 
 Optimistic update with rollback: flip the switch immediately, send the PATCH, and revert
 with an inline error on failure. Reverting is the required behaviour — leaving a switch
@@ -126,15 +127,15 @@ in a state the server rejected is the "fake state" tell.
 
 | Action | Confirmation | Why |
 | --- | --- | --- |
-| Stop / Restart proxy | **Yes** — sheet | Disruptive: kills in-flight requests |
+| Stop proxy | **Yes** — sheet | Disruptive: kills in-flight requests, and nothing restarts it |
 | Provider disable | No — optimistic + undo | Cheap and reversible |
 | Provider enable | No | Strictly additive |
 
 `dev-uiux-design` UX-LAZY-01 exempts destructive actions from magic defaults, and stopping
 a proxy mid-request is destructive. Everything else stays frictionless.
 
-`ConfirmSheet` states the concrete consequence — "In-flight requests will be
-interrupted." — not a generic "Are you sure?".
+`ConfirmSheet` states the concrete consequence — "In-flight requests will be interrupted,
+and OpenCodex will not restart on its own." — not a generic "Are you sure?".
 
 ## Security rules
 
@@ -142,8 +143,9 @@ interrupted." — not a generic "Are you sure?".
   (`010`), and never in a URL query.
 - No response body ever reaches a log, an error string, or the UI verbatim. Failures map
   to a fixed set of human sentences.
-- No shell execution on the default path. The service-managed restart path is the only
-  process interaction, and only when `startup-health` proves a supervisor exists.
+- **No shell execution at all.** The app never spawns `ocx` or any other process; it only
+  displays the command for the user to run. This is stricter than PR #387, which shelled
+  out to the CLI, and it removes an entire class of injection and privilege concerns.
 - The app never writes to `~/.opencodex/config.json` directly; all mutation goes through
   the management API so the proxy's own validation runs.
 
@@ -151,18 +153,22 @@ interrupted." — not a generic "Are you sure?".
 
 Stubbed `URLProtocol`:
 
-- `stop()` on `200` → `.succeeded` only after reachability actually drops.
+- `stop()` on `200` → `.requiresManualStart` only after reachability actually drops.
 - `stop()` where the port keeps answering → `.failed`, never a false success.
 - `setProviderDisabled` sends `PATCH /api/providers?name=x` with body exactly
   `{"disabled":true}`.
 - A `400` response reverts the optimistic toggle.
-- The default provider's toggle is disabled before any request is attempted.
+- The default provider (from `/api/config`) has its toggle disabled before any request is
+  attempted.
+- No code path constructs a `Process` / `NSTask`.
 - No error path leaks a response body into `ActionOutcome`.
 
 ## Accept criteria
 
-1. Stop/Restart executed live against the running proxy, with the observed outcome.
+1. Stop executed live against the running proxy, with the observed outcome, and the
+   resulting `unreachable` state showing the manual start command.
 2. Provider disable + re-enable executed live and reflected in `/api/providers`.
-3. The default provider's toggle is inert and explains why.
+3. The default provider's toggle is inert and explains why, using `/api/config`.
 4. Failure paths surface a human sentence, never a raw body.
-5. `swift test --package-path app` green.
+5. No `Process` / `NSTask` usage anywhere in `app/`.
+6. `swift test --package-path app` green.

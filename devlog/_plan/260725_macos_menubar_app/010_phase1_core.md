@@ -1,8 +1,14 @@
 # 010 — Phase 1: app skeleton, proxy discovery, management API client
 
 **Depends on:** nothing (foundation phase).
-**Independently verifiable by:** `swift test --package-path app` green, and
-`bash scripts/build-macos-app.sh` producing a launchable `OpenCodex.app`.
+**Independently verifiable by:** `swift test --package-path app` green and
+`swift build --package-path app -c release --arch arm64` succeeding.
+
+**Bundle scope note (audit correction):** an earlier draft closed this phase on a
+`.app` produced by `scripts/build-macos-app.sh`, but that script is a Phase-4
+deliverable — a phase cannot be verified by a later phase's output. Phase 1 therefore
+closes on the compiler and the test suite. The first launchable bundle is a Phase-2
+deliverable (it needs the UI to be worth launching), and Phase 4 hardens and packages it.
 
 ## File change map
 
@@ -15,7 +21,7 @@
 | `app/Sources/MenuBarCore/ProxyClient.swift` | NEW |
 | `app/Sources/MenuBarCore/Formatting.swift` | NEW |
 | `app/Sources/MenuBarCore/Keychain.swift` | NEW |
-| `app/Sources/MenuBarApp/main.swift` | NEW (placeholder app that launches; UI lands in 020) |
+| `app/Sources/MenuBarApp/main.swift` | NEW (minimal `NSApplication` entry; UI lands in 020) |
 | `app/Tests/MenuBarCoreTests/DiscoveryTests.swift` | NEW |
 | `app/Tests/MenuBarCoreTests/ModelDecodingTests.swift` | NEW |
 | `app/Tests/MenuBarCoreTests/FormattingTests.swift` | NEW |
@@ -119,8 +125,19 @@ public struct StartupHealth: Decodable, Equatable, Sendable {
     public let protection: String?
     public let platform: String?
     public let serviceRunning: Bool?
+    public let serviceInstalled: Bool?
+    public let serviceEnabled: Bool?
     public let rebootSafe: Bool?
     public let recommendedCommand: String?
+}
+
+/// `GET /api/config` — the ONLY source of `defaultProvider` (`002` §3).
+/// `/api/settings` does not carry it; the live key set there is exactly
+/// codexAutoStart · port · hostname · streamMode · startupHealth · codexRuntime.
+public struct ProxyConfigSummary: Decodable, Equatable, Sendable {
+    public let port: Int?
+    public let hostname: String?
+    public let defaultProvider: String?
 }
 
 public struct UsageSummary: Decodable, Equatable, Sendable {
@@ -184,6 +201,10 @@ public struct ProxySettings: Decodable, Equatable, Sendable {
 }
 ```
 
+`serviceInstalled` and `serviceEnabled` are decoded because `020`'s status qualifier line
+renders them. They deliberately do **not** drive a restart branch — `030` establishes
+that `/api/stop` stops launchd on purpose and nothing restarts the proxy automatically.
+
 ### The normalized quota view (the trap from `002` §3)
 
 ```swift
@@ -239,7 +260,8 @@ public actor ProxyClient {
 
     public func health() async throws -> StartupHealth
     public func settings() async throws -> ProxySettings
-    public func usage(range: String = "24h") async throws -> UsageReport
+    public func config() async throws -> ProxyConfigSummary
+    public func usage(range: UsageRange = .sevenDays) async throws -> UsageReport
     public func quotas() async throws -> [QuotaReport]
     public func providers() async throws -> [ProviderSummary]
 
@@ -269,6 +291,24 @@ data-race-free by construction.
 `unauthorized` is a distinct case because it drives a distinct UI state — "add your API
 key", not "the proxy is down". `002` §2 records that a loopback bind needs no credential,
 so this path only fires for non-loopback setups.
+
+### `UsageRange` is a closed enum, not a string
+
+`src/usage/summary.ts:95-98` accepts exactly `7d`, `30d`, `all` and silently falls back
+to `30d` for anything else. A stringly-typed range would let a caller ask for `24h`,
+receive 30 days of data, and label it wrongly — which is exactly what an earlier draft of
+this plan specified.
+
+```swift
+public enum UsageRange: String, Sendable {
+    case sevenDays = "7d"
+    case thirtyDays = "30d"
+    case all
+}
+```
+
+The UI additionally renders the `range` value the response actually returned, never the
+one it requested (`020`).
 
 **Privacy rule:** `ProxyError` carries no response body. Bodies can echo config values,
 and `privacy:scan` forbids logging them.
@@ -303,9 +343,10 @@ file falls back · out-of-range port (`0`, `70000`) falls back · `OPENCODEX_HOM
 · host is loopback even when the file names another host.
 
 `ModelDecodingTests`: decode the **verbatim live payloads captured in `002`** (not
-hand-written fixtures) for health, usage, quotas, providers · unknown `status` string
-decodes without throwing · absent `quota` normalizes to `percent: nil` · openai seconds
-and anthropic milliseconds both resolve to sane 2026 dates.
+hand-written fixtures) for health, usage, quotas, providers, config · unknown `status`
+string decodes without throwing · absent `quota` normalizes to `percent: nil` · openai
+seconds and anthropic milliseconds both resolve to sane 2026 dates · `ProxySettings`
+decodes without a `defaultProvider` field and `ProxyConfigSummary` supplies it.
 
 `FormattingTests`: the `002` magnitudes (`232507`, `36536664705`, `34018.25`) render as
 `232K`, `36.5B`, `$34.0K` · `nil` renders `—` · zero renders `0`, not `—`.
@@ -327,6 +368,7 @@ never afterwards.
 
 1. `swift test --package-path app` green, with the `002` payloads as fixtures.
 2. `swift build --package-path app -c release --arch arm64` succeeds.
-3. A `.app` bundle launches and appears in the menu bar (placeholder UI is acceptable).
-4. `git status` shows no `.build/` or `dist/` entries.
-5. `bun run typecheck` and `bun run test` unaffected (no TS added).
+3. `UsageRange` admits only `7d`/`30d`/`all`; no call site can request `24h`.
+4. `ProxyConfigSummary.defaultProvider` decodes from live `/api/config`.
+5. `git status` shows no `.build/` or `dist/` entries.
+6. `bun run typecheck` and `bun run test` unaffected (no TS added).

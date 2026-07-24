@@ -176,18 +176,31 @@ shown as selectable text — displayed, never executed (`002` §3).
 
 ### `MetricsRowView`
 
-Three columns from `/api/usage?range=24h`: REQUESTS, TOKENS, COST. Labels in
+Three columns from `/api/usage?range=7d`: REQUESTS, TOKENS, COST. Labels in
 `Theme.micro` uppercase with 0.5pt tracking; values in `Theme.numeric`. All values
 through `Format` (`010`), so `36536664705` becomes `36.5B` and `nil` becomes `—`.
+
+**The range label is rendered from the response, not the request.** `002` §3 records that
+`parseRange` silently falls back to `30d` for any unrecognized value, so a UI that
+labelled its own request would lie whenever the server disagreed. The section header
+reads `LAST 7 DAYS` only when `response.range == "7d"`.
 
 When `summary.estimatedRequests > 0`, the requests value carries a trailing `~` with an
 `accessibilityLabel` explaining the estimate — `003` §6 requires estimates to be marked.
 
 ### `SparklineView`
 
-24 bars from `usage.days` (or hours when `range=24h` returns hourly buckets). Pure
-`NSBezierPath` fill in `Theme.faint`, 24pt tall, no axes, no labels, no gradient. Renders
-nothing (not a flat line) when data is absent.
+**Usage trend, not "activity".** One bar per element of `usage.days`, which is
+day-granular — `002` §3 records that `rangeWindow()` only ever produces daily buckets and
+that hourly data does not exist without a `src/` change. With `range=7d` that is 7 bars.
+The bar count follows `days.count`; it is never hardcoded.
+
+Pure `NSBezierPath` fill in `Theme.faint`, 24pt tall, no axes, no labels, no gradient.
+Renders nothing (not a flat line) when data is absent.
+
+Recent per-request activity (`GET /api/logs?tail=N`) is deliberately out of scope for v1 —
+`002` §3 records the reasoning: per-request rows expose model and timing detail for the
+user's real traffic, and the dashboard already presents it with proper filtering.
 
 ### `QuotaRowView`
 
@@ -206,7 +219,7 @@ looks like "0% used".
 
 ### `ActionBarView`
 
-`Dashboard` (opens `http://127.0.0.1:<port>` in the browser) · `Restart` (wired in `030`)
+`Dashboard` (opens `http://127.0.0.1:<port>` in the browser) · `Stop proxy` (wired in `030`)
 · `···` overflow menu (Preferences, Quit). Buttons are `.recessed` bezel, 24pt tall, with
 `accessibilityLabel` on the icon-only overflow.
 
@@ -219,6 +232,14 @@ looks like "0% used".
 | `unreachable` | "Stopped" + red | "The proxy is not running." | **Start proxy** |
 | `unauthorized` | "Needs API key" + amber | "This proxy requires a key." | **Add key…** |
 | `degraded` | "Degraded" + amber | last known values + staleness age | Retry |
+
+Corrections from the Phase-0 audit, carried in from `030`:
+
+- The `running` action is **`Stop proxy`**, never `Restart`. `/api/stop` stops launchd on
+  purpose and no start endpoint exists.
+- The `unreachable` action is **not** a button that starts anything. It displays the
+  command to run (`ocx start`, or `ocx service start` when a service is installed) as
+  selectable text, since the app never spawns processes.
 
 Every non-running state names its next action — `dev-uiux-design` UX-STATE-01 forbids
 dead-ending the user. `degraded` deliberately keeps the last known values with an explicit
@@ -245,4 +266,8 @@ what the screenshot shows, then re-verify. Code review alone does not close this
 3. All five states reachable and each names a next action.
 4. Screenshot inspected with `view_image` in both appearances.
 5. Keyboard: popover opens, Tab reaches every control, Escape closes.
-6. `swift test --package-path app` green.
+6. The metrics header renders the range the response returned, verified by forcing a
+   fallback (`?range=bogus` → server answers `30d` → header must read `LAST 30 DAYS`).
+7. Sparkline bar count equals `days.count`, not a hardcoded 24.
+8. A launchable `.app` bundle exists (first bundle milestone; `040` hardens it).
+9. `swift test --package-path app` green.

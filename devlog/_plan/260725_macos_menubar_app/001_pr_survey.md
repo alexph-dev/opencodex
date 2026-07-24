@@ -47,6 +47,8 @@ repair, not cosmetic churn.
 ## 2. PR #421 — `feat(menubar): redesign as macOS status widget` (genglintong)
 
 **Branch:** `feat/menubar-status-widget` · **Directory:** `menubar/` · 5 commits · +14532/-0
+**Surveyed at head `049ef2ac`** (re-verified after the Phase-0 audit; an earlier draft of
+this document described an older head and was factually wrong — see §2.1).
 
 Architecture:
 
@@ -65,14 +67,29 @@ Design: four-tab segmented widget (Usage / Health / Status / Activity), Apple-st
 white theme, tabular-nums stats, `macOSPrivateApi: true` for a transparent rounded
 popover with shadow. The submitted screenshot is the more polished of the two.
 
-Distribution: **none.** `.github/` is untouched — no CI job, no release job. Its own
-Non-goals list says "DMG / Homebrew distribution (cargo build from source)". A user
-would need `rustup` plus a full frontend toolchain to obtain the app.
+Distribution: `menubar/scripts/build-app.sh` runs `cargo tauri build` and produces both
+`OpenCodex Menubar.app` and a `.dmg`. **But `.github/` is untouched** — no CI job, no
+release job, no artifact attached to any GitHub Release. A user still needs `rustup` plus
+a frontend toolchain and must build from source.
 
-Blocking defect: `menubar/src-tauri/target/**` was committed. The Codex reviewer's P1
-notes that `.rustc_info.json` and sibling artifacts embed the contributor's
-`/Users/glt/` home path and that `bun run privacy:scan` fails on the tree. Adding the
-path to `.gitignore` does not remove it from history.
+### 2.1 Correction: the committed-artifacts defect is FIXED at the current head
+
+An earlier draft of this survey stated that `menubar/src-tauri/target/**` was committed
+and that `bun run privacy:scan` fails on the tree. **That was true of the head the Codex
+reviewer saw, and the contributor has since fixed it.** Verified directly against
+`049ef2ac`:
+
+```text
+gh pr view 421 --json files --jq '[.files[].path | select(test("src-tauri/target"))] | length'
+  -> 0
+
+gh api repos/genglintong/opencodex/contents/menubar/src-tauri?ref=049ef2ac
+  -> .gitignore, Cargo.lock, Cargo.toml, build.rs, capabilities, gen, icons, src, tauri.conf.json
+```
+
+Commit `049ef2ac` is titled "fix(menubar): address all Codex review findings (5 P1 + 14
+P2)". The contributor responded to review properly and the tree is clean. Any closing
+comment must say so; repeating the stale defect would be both wrong and unfair.
 
 ## 3. Head-to-head
 
@@ -83,9 +100,9 @@ path to `.gitignore` does not remove it from history.
 | Bundle size class | ~single-MB native | tens of MB (WebView shell + Rust) |
 | Transport | `ocx` CLI subprocess | HTTP management API |
 | Requires proxy source change | yes (`src/cli/status.ts`) | no |
-| Distribution to users | zip + SHA-256 attached to Release | none, build from source |
+| Distribution to users | zip + SHA-256 attached to Release | `.app` + `.dmg`, build from source only |
 | CI coverage | macOS test + build steps | none |
-| Committed artifacts | none | `src-tauri/target/**` (privacy:scan FAIL) |
+| Committed artifacts | none | none (fixed at `049ef2ac`) |
 | UI polish (as submitted) | functional menu | higher — segmented tabs, tuned spacing |
 | Data breadth | proxy status + control | usage, health, status, activity, quotas |
 
@@ -113,6 +130,18 @@ Rationale, in order of weight:
    Private API usage is a documented App Store rejection vector and a notarization risk;
    AppKit's `NSPopover` gives the same visual result through public API.
 
+**What is explicitly NOT part of the rationale** (each was in an earlier draft and each
+is now known to be wrong or unfair):
+
+- Not "committed build artifacts" — fixed at `049ef2ac` (§2.1).
+- Not "no bundle at all" — `build-app.sh` produces both `.app` and `.dmg`.
+- Not "packaging must be rebuilt from scratch" — the gap is repository CI/release
+  *attachment*, not the ability to produce a bundle locally.
+
+The rejection of Tauri rests on exactly three facts: no repository CI or release
+attachment, a materially heavier build stack for a project whose premise is one Bun
+process, and the private-API dependency.
+
 ### 4.1 The universal-binary finding (must be honoured by Phase 4)
 
 Probed live on this machine:
@@ -134,6 +163,16 @@ a failure. The universal assertion belongs in CI, where `macos-latest` runners c
 full Xcode. Phase 4 must therefore keep `UNIVERSAL` opt-in with the CLT guard, and the
 `lipo` both-arch assertion must run in the CI job rather than gating local builds.
 
+### 4.2 What the HTTP transport decision costs, honestly
+
+Choosing HTTP over the CLI is not free. `/api/stop` stops launchd on purpose
+(`src/server/management-api.ts:136-147`), and there is no start endpoint — so the app can
+stop the proxy but can never start it. PR #387's CLI transport *could* run `ocx start`.
+
+This is accepted rather than worked around: the app ships **Stop proxy**, not Restart, and
+shows the start command for the user to run. Spawning processes from a menu bar app to
+paper over a missing endpoint is worse than being honest about the capability. See `030`.
+
 ## 5. What is salvaged from each PR
 
 From **#387 (jaycho46)** — packaging architecture: manual bundle assembly, the
@@ -147,6 +186,9 @@ From **#421 (genglintong)** — product architecture: HTTP management-API transp
 rendering layer, the four-surface information architecture (usage / health / status /
 activity), tabular-numeral stat treatment, and skipping auth entirely when the proxy has
 no `apiKeys` configured.
+
+The contributor's review-response discipline at `049ef2ac` also directly improved this
+plan: the audit that caught this document's own stale claims used that head as evidence.
 
 ## 6. Rejected alternatives
 

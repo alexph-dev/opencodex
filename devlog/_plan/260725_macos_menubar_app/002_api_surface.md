@@ -47,19 +47,31 @@ Keychain and retry with `x-opencodex-api-key`. Never log the token, never write 
 
 ### `GET /api/settings`
 
-Bind/runtime configuration plus an embedded `startupHealth`. Live shape (truncated):
+Bind/runtime configuration plus an embedded `startupHealth`. **Exact live key set**
+(enumerated, because an earlier draft of this plan assumed a field that does not exist):
 
-```json
-{
-  "codexAutoStart": false,
-  "port": 10100,
-  "hostname": "127.0.0.1",
-  "streamMode": "auto",
-  "startupHealth": { "...": "see below" }
-}
+```text
+codexAutoStart · port · hostname · streamMode · startupHealth · codexRuntime
 ```
 
 Used for: the port/hostname the app displays, and as the cheapest liveness probe.
+
+**`defaultProvider` is NOT in this response.** It lives in `GET /api/config` (below).
+
+### `GET /api/config`
+
+The safe config DTO (`src/server/auth-cors.ts:287-337` builds it; secrets are stripped).
+Live key set:
+
+```text
+port · hostname · defaultProvider · codexAutoStart · websockets · providers
+```
+
+Live value: `"defaultProvider": "openai"`.
+
+This is the **only** source for `defaultProvider`, which Phase 3 needs to disable the
+toggle on the provider that cannot be disabled (§4). `/api/providers` does not mark the
+default.
 
 ### `GET /api/startup-health`
 
@@ -91,7 +103,22 @@ silently.
 
 ### `GET /api/usage`
 
-Accepts `?range=` (`24h`/`7d`/`30d`, live default `30d`) and `?surface=`.
+Accepts `?range=` and `?surface=`.
+
+**Supported ranges are exactly `7d`, `30d`, and `all`** — `src/usage/summary.ts:95-98`:
+
+```ts
+export function parseRange(input: string | null | undefined): UsageRange {
+  if (input === "7d" || input === "30d" || input === "all") return input;
+  return "30d";
+}
+```
+
+Unrecognized values silently fall back to `30d`. Verified live: requesting
+`?range=24h` returned `"range": "30d"` with 30 daily buckets. **There is no 24-hour
+contract and no hourly bucketing.** `rangeWindow()` (`summary.ts:105-108`) only ever
+produces day-granular windows. Adding an hourly range would require a `src/` change,
+which is out of scope, so the UI uses `7d` and labels it truthfully.
 
 ```json
 {
@@ -111,7 +138,21 @@ cost reaches five figures. **Every numeric in the UI must be abbreviated and use
 figures**; naive rendering destroys the layout. This is a hard design input, recorded in
 `003`.
 
-`days[]` is the source for the activity sparkline. No separate activity endpoint exists.
+`days[]` is day-granular and is the source for the **usage trend** sparkline. It is not
+"recent activity" — see `/api/logs` below for that distinction.
+
+### `GET /api/logs`
+
+`src/server/management/logs-usage-routes.ts:66-69` — returns recent request log entries
+through `requestLogDto`, filterable by query params. Each entry carries request time,
+model, provider, status, latency, and token counts.
+
+This is the real "recent activity" source, and PR #421 used it. **Decision: not consumed
+in v1.** Per-request rows carry model names and timing for a user's actual traffic; a
+menu bar popover that is always one click from view is the wrong surface for that, and
+the dashboard already renders it with proper filtering. The popover shows aggregate
+trend only. This is a deliberate exclusion, not an oversight, and the endpoint stays
+available if the requirement changes.
 
 ### `GET /api/provider-quotas`
 
@@ -155,9 +196,23 @@ drives the toggle in Phase 3.
 
 ### `POST /api/stop`
 
-`src/server/management-api.ts:136`. Answers `200` first, then drains
-(`src/lib/process-control.ts:77`). The app must therefore treat `200` as "stop accepted",
-not "stopped", and re-probe until the port stops answering.
+`src/server/management-api.ts:136-147`. The full body matters:
+
+```ts
+stopServiceIfInstalled();
+const restore = restoreNativeCodex();
+setTimeout(async () => { await drainAndShutdown(...); process.exit(0); }, 200);
+return jsonResponse({ success: true, message: "Proxy stopping, native Codex restored." });
+```
+
+Two consequences, both load-bearing:
+
+1. **It answers `200` before draining.** The app treats `200` as "stop accepted", not
+   "stopped", and re-probes until the port stops answering.
+2. **It calls `stopServiceIfInstalled()` first — deliberately stopping launchd so the
+   supervisor cannot respawn the proxy.** A service-managed proxy therefore stays down.
+   **There is no automatic restart, and no start endpoint exists.** Any UI that says
+   "Restart" would be lying. See `030` for the corrected action design.
 
 ### `PATCH /api/providers?name=<provider>`
 
@@ -189,9 +244,10 @@ change, so the surface stays extensible.
 | Data | Endpoint | Interval | Rationale |
 | --- | --- | --- | --- |
 | Liveness + health | `/api/startup-health` | 5 s | Cheap, drives the icon |
-| Usage summary | `/api/usage?range=24h` | 60 s | Aggregation is expensive |
+| Usage summary | `/api/usage?range=7d` | 60 s | Aggregation is expensive; `7d` is a real range |
 | Quotas | `/api/provider-quotas` | 60 s | Upstream-rate-limited |
 | Providers | `/api/providers` | on popover open | Changes rarely |
+| Config (`defaultProvider`) | `/api/config` | on popover open | Changes rarely |
 
 Polling pauses entirely while the popover is closed except for the 5 s liveness tick, and
 backs off to 30 s after three consecutive failures. This keeps an idle menu bar app from

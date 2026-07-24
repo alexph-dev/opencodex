@@ -1,7 +1,7 @@
 # 260725 — macOS menu bar companion app (`app/`)
 
 **Unit:** `devlog/_plan/260725_macos_menubar_app/`
-**Branch:** `feat/macos-app` (worktree `/Users/jun/Developer/new/700_projects/opencodex-macos-app`, based on `origin/dev` @ `dbed8c15`)
+**Branch:** `feat/macos-app` (dedicated worktree `<worktree>/opencodex-macos-app`, based on `origin/dev` @ `dbed8c15`)
 **Work class:** C4 (new shippable surface + release/CI wiring)
 **Mode:** HOTL multi-cycle PABCD under `cxc-loop`. This document is the Phase-0 roadmap lock.
 
@@ -62,6 +62,15 @@ Live proxy surface (`127.0.0.1:10100`, verified by `curl`): `/api/settings`,
 `/api/startup-health`, `/api/usage`, `/api/provider-quotas`, `/api/providers`,
 `/api/stop`. Full payload shapes in `002_api_surface.md`.
 
+Audit-corrected surface facts (see `002` for evidence):
+
+- `defaultProvider` is served by `/api/config`, **not** `/api/settings`.
+- `/api/usage` supports only `7d` / `30d` / `all`; `24h` silently degrades to `30d`.
+- `/api/stop` calls `stopServiceIfInstalled()` before responding, so nothing restarts the
+  proxy and no start endpoint exists.
+- `/api/logs` exists and would serve per-request activity; it is deliberately excluded
+  from v1.
+
 ## Work-phase map (dependency-ordered, PHASE-SPLIT-01)
 
 Ordering is build-order, not effort: the transport contract must exist before the UI
@@ -71,11 +80,14 @@ bundle must exist before packaging can wrap it.
 | Phase | Doc | Delivers | Independently verifiable by |
 | --- | --- | --- | --- |
 | 0 | `000`-`003` | Research, API inventory, design lock, this roadmap | Docs exist, audit passes |
-| 1 | `010` | `app/` skeleton, proxy discovery, typed API client | `swift test` green, launchable bundle |
-| 2 | `020` | Menu bar item + popover UI, all states | Screenshot of running app |
+| 1 | `010` | `app/` skeleton, proxy discovery, typed API client | `swift test` + `swift build` green |
+| 2 | `020` | Menu bar item + popover UI, all states, first launchable bundle | Screenshot of running app |
 | 3 | `030` | Write actions on existing endpoints | Live action against running proxy |
 | 4 | `040` | Universal build, packaging, CI/release wiring | `lipo -archs`, workflow syntax |
 | 5 | `050` | Docs, PR closure, push | `gh pr view`, `git ls-remote` |
+
+Phase 1 closes on the compiler and tests, not on a bundle: `scripts/build-macos-app.sh`
+is a Phase-4 artifact, and a phase may not be verified by a later phase's output.
 
 ## Scope boundary
 
@@ -90,14 +102,17 @@ to `dev`/`main`, the six Haydern provider PRs, `gui/**` beyond required asset re
 
 1. `app/` produces a launchable `.app` bundle from a repo script.
 2. Proxy discovery honours `~/.opencodex/runtime-port.json` and falls back to 10100.
-3. The popover renders health, usage/quota, providers, and activity from live data.
+3. The popover renders health, usage trend, quotas, and providers from live data.
+   ("Activity" is the day-granular usage trend; per-request logs are out of scope for v1.)
 4. Loading / empty / error / proxy-unreachable states each render a next action.
-5. Write actions call only pre-existing endpoints.
+5. Write actions call only pre-existing endpoints, and the app never spawns a process.
 6. Release build is universal (arm64 + x86_64) **in CI**; local arm64-only is accepted
    and documented (see `001` §4).
 7. `bun run typecheck`, `bun run test`, `bun run privacy:scan` green.
-8. No build artifacts or developer-absolute paths committed.
-9. PRs #387 and #421 closed with English maintainer comments crediting both authors.
+8. No build artifacts committed, and no developer-absolute home path in any tracked file
+   (including `devlog/`, which `privacy:scan` does not cover).
+9. PRs #387 and #421 closed with English maintainer comments crediting both authors, each
+   written against the PR's head commit at the time of posting.
 10. `feat/macos-app` pushed to origin.
 
 ## Terminal outcomes

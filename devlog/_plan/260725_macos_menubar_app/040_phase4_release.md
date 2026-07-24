@@ -1,6 +1,8 @@
 # 040 — Phase 4: universal build, release packaging, CI wiring
 
-**Depends on:** `010`-`030` (there must be an app worth packaging).
+**Depends on:** `010`-`030` (there must be an app worth packaging). Phase 2 produces the
+first launchable bundle via a minimal builder; this phase hardens it into a signed,
+verified, distributable artifact.
 **Independently verifiable by:** `lipo -archs` on the packaged executable, archive
 content assertion, and workflow syntax validation.
 
@@ -58,6 +60,12 @@ swift build "${swift_args[@]}"
 bin_dir="$(swift build "${swift_args[@]}" --show-bin-path)"
 ```
 
+**Every path is defined before use, and `output_root` exists before `mktemp` targets it.**
+An earlier draft of this document called `mktemp` inside a directory it had not created,
+used `$iconset` before defining it, and ran `plutil` against an `Info.plist` it never
+copied — under `set -u` that script cannot run. The full sequence below is the executable
+version.
+
 **The CLT guard is not optional.** `001` §4.1 records the live probe on this machine:
 
 ```text
@@ -73,12 +81,16 @@ explanation. PR #387 discovered this and its message is kept nearly verbatim.
 Staging, then atomic swap:
 
 ```bash
+mkdir -p "$output_root"
+output_root="$(cd "$output_root" && pwd)"
 staging_root="$(mktemp -d "$output_root/.OpenCodex-build.XXXXXX")"
 staged_app="$staging_root/OpenCodex.app"
+iconset="$staging_root/OpenCodex.iconset"
 trap 'rm -rf "$staging_root"' EXIT
 
 mkdir -p "$staged_app/Contents/MacOS" "$staged_app/Contents/Resources"
 cp "$bin_dir/OpenCodexMenuBar" "$staged_app/Contents/MacOS/OpenCodexMenuBar"
+cp "$package_dir/Info.plist" "$staged_app/Contents/Info.plist"
 
 # Version comes from package.json — the app can never claim a version the release did not ship.
 version="$(sed -n 's/^[[:space:]]*"version": "\([^"]*\)",/\1/p' "$repo_root/package.json" | head -n 1)"
@@ -86,6 +98,13 @@ plutil -replace CFBundleShortVersionString -string "$version" "$staged_app/Conte
 plutil -replace CFBundleVersion            -string "$version" "$staged_app/Contents/Info.plist"
 
 # Icon: reuse the existing dashboard favicon, no new binary asset in the repo.
+icon_source="$repo_root/gui/public/favicon.png"
+[[ -f "$icon_source" ]] || { echo "Missing icon source: $icon_source" >&2; exit 1; }
+mkdir -p "$iconset"
+for size in 16 32 128 256 512; do
+  sips -z "$size" "$size"           "$icon_source" --out "$iconset/icon_${size}x${size}.png"      >/dev/null
+  sips -z "$((size*2))" "$((size*2))" "$icon_source" --out "$iconset/icon_${size}x${size}@2x.png" >/dev/null
+done
 iconutil -c icns "$iconset" -o "$staged_app/Contents/Resources/OpenCodex.icns"
 
 # Ad-hoc sign so Gatekeeper has a stable identity; CI may re-sign with a real identity.
@@ -144,37 +163,102 @@ Placed after `privacy:scan` so a credential leak fails before a long Swift build
 
 ## `.github/workflows/release.yml`
 
-New job, mirroring #387's shape:
+### Current state (read before editing)
+
+The workflow declares **workflow-level** permissions at lines 32-35:
+
+```yaml
+permissions:
+  contents: write   # create the GitHub Release + tag after npm publish
+  actions: read     # verify the release commit passed Cross-platform CI
+  id-token: write   # OIDC for Trusted Publishing + provenance
+```
+
+Workflow-level permissions are **inherited by every job**. A `package-macos` job added
+without its own `permissions:` block would silently run with `contents: write` and
+`id-token: write` — an OIDC-capable token in a job that builds third-party-toolchain
+code. An earlier draft of this document claimed the job "needs no `id-token`, no
+`contents: write`" while specifying no block that would achieve that.
+
+### Job graph
+
+Three jobs, with npm independence preserved by construction:
+
+```text
+publish (existing)         package-macos (new)
+   npm + GitHub Release        build + zip + sha256
+          \                        /
+           \                      /
+            attach-macos (new, needs: [publish, package-macos])
+                 upload assets to the existing Release
+```
+
+`publish` gains no `needs`, so a Swift or packaging failure **cannot** block or fail the
+npm publish. `attach-macos` runs only when both succeed. If npm publishes but packaging
+fails, the release is still valid and the asset is attached by re-running the workflow's
+packaging path — documented in the guide as the retry procedure.
+
+### The jobs
 
 ```yaml
 package-macos:
   runs-on: macos-latest
-  timeout-minutes: 15
+  timeout-minutes: 20
+  permissions:
+    contents: read            # explicit: drops the inherited write + id-token
   outputs:
     archive_name:  ${{ steps.package.outputs.archive_name }}
     checksum_name: ${{ steps.package.outputs.checksum_name }}
   steps:
     - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+      with:
+        persist-credentials: false
     - id: package
       env:
         RELEASE_VERSION: ${{ inputs.version }}
         UNIVERSAL: "1"
       run: bash scripts/package-macos-release.sh
-    - uses: actions/upload-artifact@<pinned-sha>
+    - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+      with:
+        name: macos-release
+        path: dist/release/
+        if-no-files-found: error
+        retention-days: 7
+
+attach-macos:
+  runs-on: ubuntu-latest
+  needs: [publish, package-macos]
+  if: ${{ inputs.dry_run != true }}
+  timeout-minutes: 10
+  permissions:
+    contents: write           # only to attach assets to the existing Release
+  steps:
+    - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      with:
+        name: macos-release
+        path: dist/release
+    - name: Verify checksum before upload
+      run: cd dist/release && shasum -a 256 -c *.sha256
+    - name: Attach to release
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: gh release upload "v${{ inputs.version }}" dist/release/* --clobber
 ```
 
-The release job then downloads the artifact and attaches both files to the GitHub
-Release. **`UNIVERSAL: "1"` is safe here specifically because `macos-latest` carries a
-full Xcode**, which is the environment `001` §4.1 identified as the one that can produce
-both slices. This is why the universal assertion lives in CI and not in the local gate.
+`shasum -c` before upload means a corrupted artifact transfer cannot become a published
+asset. `if: inputs.dry_run != true` keeps dry runs from touching a real Release.
+
+**`UNIVERSAL: "1"` is safe here specifically because `macos-latest` carries a full
+Xcode**, the environment `001` §4.1 identified as the only one that can produce both
+slices. This is why the universal assertion lives in CI and not in the local gate.
 
 Constraints honoured:
 
-- Every action pinned to a full commit SHA (existing repo convention, and `AGENTS.md`
-  treats mutable third-party refs as a release blocker).
-- `package-macos` needs no `id-token`, no `contents: write`, no secrets.
-- The npm publish path is untouched; a macOS packaging failure must not be able to
-  corrupt an npm release.
+- Every action pinned to a full commit SHA, including the two new ones above
+  (`AGENTS.md` treats mutable third-party refs as a release blocker).
+- Each new job declares explicit least-privilege `permissions`, overriding inheritance.
+- `persist-credentials: false` on the packaging checkout.
+- The npm publish path gains no new dependency.
 
 ## Privacy and artifact hygiene
 
@@ -193,6 +277,13 @@ Constraints honoured:
 3. `lipo -archs` shows `arm64` locally; both arches asserted in CI.
 4. `UNIVERSAL=1` under Command Line Tools fails with the explanatory message, not a
    linker error.
-5. Workflow YAML parses; all actions SHA-pinned.
-6. `bun run typecheck`, `bun run test`, `bun run privacy:scan` green.
-7. No build artifacts tracked by git.
+5. The build script runs end to end on a clean checkout under `set -euo pipefail`, with
+   every variable defined before use.
+6. Workflow YAML parses; all actions SHA-pinned to a full commit SHA.
+7. **Security review evidence recorded** before this phase closes (`MAINTAINERS.md`
+   requires it for release automation): the final workflow diff reviewed, effective
+   per-job permissions enumerated and confirmed least-privilege, every action pin
+   resolved to an immutable SHA, dry-run behaviour confirmed not to touch a Release, and
+   the npm-publish path confirmed to have gained no new failure dependency.
+8. `bun run typecheck`, `bun run test`, `bun run privacy:scan` green.
+9. No build artifacts tracked by git.
