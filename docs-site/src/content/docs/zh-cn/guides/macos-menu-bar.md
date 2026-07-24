@@ -90,9 +90,11 @@ xattr -d com.apple.quarantine /Applications/OpenCodex.app
 
 如果代理绑定在非回环地址上，就需要 API 密钥。面板会说明这一点并提供前往仪表板的按钮。
 
-**该路径尚未完全支持。** 应用会读取 macOS 钥匙串中的 `com.opencodex.menubar` 条目并重试一次，
-但没有输入密钥的界面。除非你自己创建该钥匙串条目，否则面板会一直停在「Needs API key」。默认的
-回环代理不需要密钥。原生密钥输入已在计划中。
+**该路径尚未支持。** 应用会从 macOS 钥匙串读取密钥并重试一次，但没有输入密钥的界面，也没有
+手动写入的办法——它是数据保护钥匙串条目，「钥匙串访问」无法创建。因此在非回环绑定下，面板会
+一直停在「Needs API key」。
+
+默认的回环代理不需要密钥。原生密钥输入已在计划中。
 
 ## 轮询
 
@@ -124,5 +126,5 @@ MACOS_SIGN_IDENTITY="Developer ID Application: Your Name (TEAMID)" bun run build
 
 ## 卸载
 
-把 `OpenCodex.app` 拖到废纸篓即可。应用不会留下偏好设置或其他状态文件。如果你为非回环代理
-手动创建过钥匙串条目，可在「钥匙串访问」中搜索 `com.opencodex.menubar` 删除。
+把 `OpenCodex.app` 拖到废纸篓即可。应用不会留下偏好设置或其他状态文件，目前也不会在钥匙串中
+保存任何内容。

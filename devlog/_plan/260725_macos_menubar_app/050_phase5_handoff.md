@@ -131,7 +131,9 @@ another contributor's machine.
 
 ## Accept criteria
 
-1. Guide published in five locales, linked from the sidebar, no locale contradictions.
+1. Guide source added in five locales, linked from the sidebar, no locale contradictions,
+   and `docs-site` builds with all five pages present. Public publication follows merge
+   and a Pages deployment; this phase delivers the branch, not the deploy.
 2. `README.md`, `AGENTS.md`, `structure/00_overview.md` mention `app/`.
 3. #387 and #421 `CLOSED` with the comments above, each verified against the PR's head
    commit at the moment of posting.
