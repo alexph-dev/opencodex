@@ -22,11 +22,38 @@ and **Phase 4 owns the bundle end to end**: the builder, the first `.app`, and p
 | `app/Sources/MenuBarCore/Formatting.swift` | NEW |
 | `app/Sources/MenuBarCore/Keychain.swift` | NEW |
 | `app/Sources/MenuBarApp/main.swift` | NEW (minimal `NSApplication` entry; UI lands in 020) |
-| `app/Tests/MenuBarCoreTests/DiscoveryTests.swift` | NEW |
-| `app/Tests/MenuBarCoreTests/ModelDecodingTests.swift` | NEW |
-| `app/Tests/MenuBarCoreTests/FormattingTests.swift` | NEW |
+| `app/Sources/MenuBarCoreTests/Harness.swift` | NEW |
+| `app/Sources/MenuBarCoreTests/DiscoverySuite.swift` | NEW |
+| `app/Sources/MenuBarCoreTests/ModelDecodingSuite.swift` | NEW |
+| `app/Sources/MenuBarCoreTests/FormattingSuite.swift` | NEW |
+| `app/Sources/MenuBarCoreTests/main.swift` | NEW |
 | `app/.gitignore` | NEW |
 | `.gitignore` (root) | MODIFY — add `dist/macos/` |
+
+### Build-time amendment: the test target is an executable, not a `.testTarget`
+
+Planned as `swift test`. That does not work on this toolchain, and the failure is
+environmental rather than incidental — verified during Phase 1 implementation:
+
+```text
+import XCTest
+  -> error: unable to resolve module dependency: 'XCTest'
+
+import Testing            (swift-testing)
+  -> compiles, then at run time:
+     Library not loaded: @rpath/Testing.framework/Versions/A/Testing
+```
+
+Xcode Command Line Tools ships neither a usable XCTest module nor the swift-testing
+runtime; both require a full Xcode install. Requiring Xcode to run the unit tests of a
+menu bar companion would put them out of reach of most contributors and of any CI runner
+that has not selected Xcode — the same class of constraint `001` §4.1 already found for
+universal builds.
+
+**Resolution:** a ~90-line dependency-free harness (`Harness.swift`) plus an executable
+target. Tests run with `swift run --package-path app MenuBarCoreTests`, exit non-zero on
+failure, and print one line per case. Migration to swift-testing is mechanical if the
+package ever requires full Xcode for other reasons.
 
 **Two-target split rationale:** `MenuBarCore` is a plain library with no AppKit
 dependency, so it is testable under `swift test` on any runner. `MenuBarApp` holds
@@ -389,9 +416,12 @@ never afterwards.
 
 ## Accept criteria
 
-1. `swift test --package-path app` green, with the `002` payloads as fixtures.
+1. `swift run --package-path app MenuBarCoreTests` green, with the `002` payloads as
+   fixtures (see the build-time amendment above).
 2. `swift build --package-path app -c release --arch arm64` succeeds.
 3. `UsageRange` admits only `7d`/`30d`/`all`; no call site can request `24h`.
 4. `ProxyConfigSummary.defaultProvider` decodes from live `/api/config`.
 5. `git status` shows no `.build/` or `dist/` entries.
 6. `bun run typecheck` and `bun run test` unaffected (no TS added).
+7. A live probe against the running proxy resolves the endpoint and decodes health,
+   config, usage, quotas, and providers — fixtures alone do not prove the transport.
