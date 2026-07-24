@@ -47,9 +47,33 @@ configuration="${CONFIGURATION:-release}"
 
 [[ "$(uname -s)" == "Darwin" ]] || { echo "build:macos requires macOS." >&2; exit 1; }
 
-# Refuse to write outside the intended output root (inherited from PR #387).
+# The build DELETES whatever sits at the destination, so containment is a safety
+# boundary. It took four attempts to get right, and each failure is why the final shape
+# looks the way it does:
+#
+#   1. comparing $app_bundle against $output_root proved nothing — same variable;
+#   2. `cd … && pwd` keeps LOGICAL paths, so a repo-local symlink pointing outside
+#      satisfied the prefix check;
+#   3. resolving physically BEFORE normalising let `..` reveal a symlink that was then
+#      never followed — and `unset 'stack[-1]'` is a bad subscript in bash 3.2 (what
+#      macOS ships), so `..` was silently never applied at all;
+#   4. a RELATIVE dangling target was joined on without normalising, so
+#      `link -> ../../outside` became `<repo>/../../outside`, passed the `<repo>/*`
+#      check, and escaped during mkdir -p.
+#
+# resolve_physical therefore normalises lexically first (quoted array iteration, so a
+# literal glob is not expanded), then resolves component by component, and refuses any
+# symlink that does not resolve to an existing directory.
+output_root="$(resolve_physical "$output_root")"
+allowed_root="$(cd "$repo_root" && pwd -P)"
+case "$output_root" in
+  "$allowed_root"/*|/private/tmp/*|/tmp/*) ;;
+  *) echo "Refusing to build into '$output_root'" >&2; exit 1 ;;
+esac
+
+# Only NOW create it, so a refused path leaves nothing behind.
+mkdir -p "$output_root"
 app_bundle="$output_root/OpenCodex.app"
-case "$app_bundle" in "$output_root"/*.app) ;; *) echo "Refusing unexpected bundle path" >&2; exit 1;; esac
 
 swift_args=(--package-path "$package_dir" -c "$configuration" --product OpenCodexMenuBar)
 if [[ "${UNIVERSAL:-0}" == "1" ]]; then

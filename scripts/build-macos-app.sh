@@ -76,16 +76,19 @@ resolve_physical() {
   resolved="/"
   for part in "${stack[@]}"; do
     local candidate="${resolved%/}/$part"
+    if [[ -L "$candidate" && ! -d "$candidate" ]]; then
+      # A symlink that is not a directory: dangling, or pointing at a file. Following it
+      # lexically was the third bypass here — a link to `../../outside` produced
+      # `<repo>/../../outside`, which satisfied the `<repo>/*` prefix check and then
+      # escaped during `mkdir -p`. There is no legitimate reason for OUTPUT_DIR to pass
+      # through such a link, so refuse instead of trying to be clever.
+      echo "Refusing to build through '$candidate': it is a symlink that does not" >&2
+      echo "resolve to an existing directory." >&2
+      exit 1
+    fi
     if [[ -d "$candidate" ]]; then
-      # Follows the symlink when there is one.
+      # `cd … && pwd -P` follows the symlink and any chain behind it.
       resolved="$(cd "$candidate" && pwd -P)"
-    elif [[ -L "$candidate" ]]; then
-      # A symlink to something that is not a directory (or is dangling): resolve its
-      # target lexically rather than trusting the link path.
-      local link_target
-      link_target="$(readlink "$candidate")"
-      [[ "$link_target" = /* ]] || link_target="${resolved%/}/$link_target"
-      resolved="$link_target"
     else
       resolved="${resolved%/}/$part"
     fi

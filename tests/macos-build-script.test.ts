@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, rmSync, symlinkSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -18,9 +18,9 @@ const repoRoot = resolve(import.meta.dir, "..");
 const script = join(repoRoot, "scripts", "build-macos-app.sh");
 const isMacOS = process.platform === "darwin";
 
-async function runScript(outputDir: string) {
+async function runScript(outputDir: string, cwd: string = repoRoot) {
   const proc = Bun.spawn(["bash", script], {
-    cwd: repoRoot,
+    cwd,
     env: { ...process.env, OUTPUT_DIR: outputDir },
     stdout: "pipe",
     stderr: "pipe",
@@ -48,17 +48,16 @@ async function withSandbox<T>(body: (sandbox: string) => Promise<T>): Promise<T>
 
 describe.skipIf(!isMacOS)("macOS build script containment", () => {
   test("refuses a destination outside the repository and creates nothing", async () => {
-    // A home-directory path: temp is an explicitly permitted root, so it cannot be used
-    // to prove refusal. The name is unique so it cannot collide with anything real.
-    const target = join(
-      process.env.HOME ?? "/Users/shared",
-      `.ocx-outside-${process.pid}-${Date.now()}`,
-    );
+    // Deliberately NOT derived from process.env.HOME: other suites replace HOME with a
+    // temp directory, and temp is a permitted root — so this test built successfully and
+    // failed during a full-suite run. A sibling of the repository is stable and is
+    // outside every permitted root.
+    const target = resolve(repoRoot, "..", `.ocx-outside-${process.pid}-${Date.now()}`);
 
     const { stderr, exitCode } = await runScript(target);
 
     expect(exitCode).not.toBe(0);
-    expect(stderr).toContain("Refusing to build into");
+    expect(stderr).toContain("Refusing to build");
     expect(existsSync(target)).toBe(false);
   }, 120_000);
 
@@ -100,9 +99,11 @@ describe.skipIf(!isMacOS)("macOS build script containment", () => {
       }
     });
 
-    // The sandbox lives under temp, which is a permitted root, so acceptance is fine.
-    // What must never happen is treating the unresolved link path as the destination.
-    if (exitCode !== 0) expect(stderr).toContain("Refusing to build into");
+    // The link points at a directory that does not exist, so the script refuses to
+    // build THROUGH it rather than guessing where it leads. What must never happen is
+    // treating the unresolved link path as a destination inside the repository.
+    expect(exitCode).not.toBe(0);
+    expect(stderr).toContain("Refusing to build");
     expect(stderr).not.toContain(`${missing}/`);
     expect(existsSync(link)).toBe(false);
     expect(existsSync(missing)).toBe(false);
@@ -121,23 +122,48 @@ describe.skipIf(!isMacOS)("macOS build script containment", () => {
       const { stderr, exitCode } = await runScript(link);
 
       expect(exitCode).not.toBe(0);
-      expect(stderr).toContain("Refusing to build into");
-      // Named by its physical target, not by the link path inside the repository.
-      expect(stderr).toContain(".ocx-symtarget-");
+      expect(stderr).toContain("Refusing to build");
       expect(existsSync(outside)).toBe(false);
     } finally {
       rmSync(link, { recursive: true, force: true });
     }
   }, 120_000);
 
-  test("treats glob characters as literal path components", async () => {
-    const target = join(repoRoot, "dist", `ocx-glob-*-${process.pid}`);
+  // The third bypass: a RELATIVE dangling target was joined onto the resolved prefix
+  // without normalising, so `link -> ../../outside` became `<repo>/../../outside`,
+  // satisfied the `<repo>/*` prefix check, and escaped during mkdir -p.
+  test("refuses a symlink whose relative target escapes the repository", async () => {
+    const link = join(repoRoot, `.ocx-rel-${process.pid}`);
+    const escaped = resolve(repoRoot, "..", "..", `ocx-rel-target-${process.pid}`);
+
+    rmSync(link, { recursive: true, force: true });
+    symlinkSync(`../../ocx-rel-target-${process.pid}`, link);
     try {
-      const { stderr } = await runScript(target);
-      expect(stderr).not.toContain("Refusing to build into");
+      const { stderr, exitCode } = await runScript(link);
+
+      expect(exitCode).not.toBe(0);
+      expect(stderr).toContain("Refusing to build");
+      expect(existsSync(escaped)).toBe(false);
     } finally {
-      rmSync(target, { recursive: true, force: true });
+      rmSync(link, { recursive: true, force: true });
     }
+  }, 120_000);
+
+  // Runs the child in a directory that CONTAINS a matching entry, so the old unquoted
+  // loop would have expanded the star. With cwd=repoRoot and the glob under dist/, the
+  // pattern matched nothing and the test passed against the broken implementation too.
+  test("treats glob characters as literal path components", async () => {
+    await withSandbox(async (sandbox) => {
+      const decoy = join(sandbox, "ocx-glob-decoy-probe");
+      mkdirSync(decoy, { recursive: true });
+
+      const { stderr } = await runScript(join(sandbox, "ocx-glob-*-probe"), sandbox);
+
+      expect(stderr).not.toContain("Refusing to build");
+      // The literal-star path is the one that was used, not the decoy it could match.
+      expect(existsSync(join(sandbox, "ocx-glob-*-probe"))).toBe(true);
+      expect(existsSync(join(decoy, "OpenCodex.app"))).toBe(false);
+    });
   }, 300_000);
 
   test("allows a destination inside the repository", async () => {
