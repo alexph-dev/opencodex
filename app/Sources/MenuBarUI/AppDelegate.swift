@@ -1,17 +1,24 @@
 import AppKit
 import MenuBarCore
 
-public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
+public final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem?
-    private let popover = NSPopover()
+    /// A key-capable panel rather than `NSPopover`.
+    ///
+    /// This is the single most-tested decision in this file. `NSPopover` from an
+    /// accessory (`LSUIElement`) process creates a window that never appears in
+    /// `NSApp.windows` and reports `canBecomeKey == false`, so macOS will not route key
+    /// events to it no matter how the process is activated — Escape and the Tab path
+    /// simply never arrive. A `nonactivatingPanel` that overrides `canBecomeKey`
+    /// measures as `canBecomeKey=1 isKey=1` under the same conditions.
+    private let panel = PopoverPanel()
     private let controller = PopoverViewController()
     private var coordinator: PollingCoordinator?
     private var client: ProxyClient?
     private var endpoint = ProxyEndpoint.default
     private var pollTask: Task<Void, Never>?
-    /// Scoped Escape handling: an accessory app's popover does not reliably receive key
-    /// events through the responder chain, so the monitor is installed on open and
-    /// removed on close rather than left running for the process lifetime.
+    /// Fallback Escape handling for the case where the panel is visible but another
+    /// process holds focus. Installed on open, removed on close.
     private var escapeMonitor: Any?
 
     public override init() { super.init() }
@@ -38,11 +45,8 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         controller.onRetry = { [weak self] in self?.refreshNow() }
         controller.onQuit = { NSApp.terminate(nil) }
 
-        popover.contentViewController = controller
-        popover.behavior = .transient
-        popover.delegate = self
-        // MOTION_INTENSITY 1: no decorative animation, and none at all under reduce-motion.
-        popover.animates = !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        panel.contentViewController = controller
+        panel.onDismiss = { [weak self] in self?.handlePanelClosed() }
 
         // The observer closure is `@Sendable` and crosses actor boundaries, so it must
         // not capture the delegate. It hops to the main actor and looks the delegate up
@@ -90,43 +94,39 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
 
     // MARK: - Actions
 
+    /// Testing hook: drives the exact presentation path a status-item click uses, so a
+    /// harness can verify key focus and Escape without Accessibility permission.
+    public func debugTogglePanel() { togglePopover() }
+
     @objc private func togglePopover() {
         guard let button = statusItem?.button else { return }
-        if popover.isShown {
-            popover.performClose(nil)
+        if panel.isShown {
+            panel.dismiss()
         } else {
-            popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
-            // Activation has to happen AFTER presentation and on a later main-loop turn:
-            // an accessory process is inactive by default, and activating before the
-            // popover window exists leaves it without key focus, so no key event —
-            // including Escape — ever reaches it.
-            DispatchQueue.main.async { [weak self] in
-                guard let self, let window = self.popover.contentViewController?.view.window else { return }
-                NSApp.activate(ignoringOtherApps: true)
-                window.makeKeyAndOrderFront(nil)
-                window.makeFirstResponder(self.controller.view)
-            }
+            panel.present(from: button)
+            installEscapeMonitor()
+            Task { [coordinator] in await coordinator?.setPopoverOpen(true) }
         }
     }
 
-    public func popoverDidShow(_ notification: Notification) {
-        installEscapeMonitor()
-        Task { [coordinator] in await coordinator?.setPopoverOpen(true) }
-    }
-
-    public func popoverDidClose(_ notification: Notification) {
+    /// Called by the panel whenever it closes, however it was dismissed.
+    private func handlePanelClosed() {
         removeEscapeMonitor()
         Task { [coordinator] in await coordinator?.setPopoverOpen(false) }
     }
 
+    /// The panel is key-capable, so `cancelOperation(_:)` handles Escape in the normal
+    /// case. This local monitor is belt-and-braces for the window where the panel is up
+    /// but focus sits elsewhere in this process, such as the confirmation sheet.
     private func installEscapeMonitor() {
         removeEscapeMonitor()
         escapeMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            guard event.keyCode == 53 else { return event }   // Escape
-            self?.popover.performClose(nil)
+            guard event.keyCode == 53, self?.panel.isShown == true else { return event }
+            self?.panel.dismiss()
             return nil
         }
     }
+
 
     private func removeEscapeMonitor() {
         if let monitor = escapeMonitor { NSEvent.removeMonitor(monitor) }

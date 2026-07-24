@@ -93,10 +93,9 @@ public struct ProxySnapshot: Equatable, Sendable {
     /// reported none" render differently.
     public var providersLoaded: Bool
     public var quotasLoaded: Bool
-    /// When health last succeeded, versus when the aggregation data last succeeded.
-    /// Conflating them let a degraded state claim "showing data from 5s ago" while
-    /// holding no metrics at all.
-    public var healthUpdated: Date?
+    /// When the aggregation data last succeeded, which is NOT when health last
+    /// succeeded. Conflating them let a degraded state claim "showing data from 5s ago"
+    /// while holding no metrics at all.
     public var usageUpdated: Date?
 
     public init(
@@ -112,7 +111,6 @@ public struct ProxySnapshot: Equatable, Sendable {
         recommendedCommand: String? = nil,
         providersLoaded: Bool = false,
         quotasLoaded: Bool = false,
-        healthUpdated: Date? = nil,
         usageUpdated: Date? = nil
     ) {
         self.state = state
@@ -127,7 +125,6 @@ public struct ProxySnapshot: Equatable, Sendable {
         self.recommendedCommand = recommendedCommand
         self.providersLoaded = providersLoaded
         self.quotasLoaded = quotasLoaded
-        self.healthUpdated = healthUpdated
         self.usageUpdated = usageUpdated
     }
 

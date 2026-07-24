@@ -316,6 +316,43 @@ The overflow menu ships `Refresh`, `Open dashboard`, and `Quit` rather than the
 originally sketched `Preferences`: there is no preferences surface to open yet, and a
 menu item that opens nothing is worse than its absence.
 
+### Round 3 (3 findings) — and the amendment that resolved Escape
+
+**`NSPopover` is replaced by a key-capable `NSPanel` (`PopoverPanel`).** This is a spec
+amendment, and it was forced by measurement rather than preference. Three rounds of
+Escape fixes failed because the premise was wrong. Probing the real delegate from an
+accessory process showed:
+
+```text
+popover window in NSApp.windows : absent
+canBecomeKey                    : false
+after NSApp.activate            : appActive=true, isKey=false
+after NSRunningApplication      : appActive=true, isKey=false
+after raising window level      : appActive=true, isKey=false
+```
+
+macOS will not route key events to a window that cannot become key, so no activation
+strategy could have worked. The same probe against `PopoverPanel`:
+
+```text
+shown=1 canBecomeKey=1 isKey=1 appActive=1
+afterEscape shown=0  RESULT=ESCAPE CLOSES PANEL
+```
+
+`PopoverPanel` keeps the popover contract that matters — transient dismissal on outside
+click, dismissal on losing key focus, `nonactivatingPanel` so opening does not steal
+focus from the user's editor — while actually being able to receive a keystroke.
+
+| Other finding | Correction |
+| --- | --- |
+| The success path's generation guard returned without draining a queued reopen | Every exit path now clears the lock and drains |
+| On-open reads ran on every 5s liveness tick | Gated on `includeHeavy`, so they run only on a real open or manual refresh |
+| An already-invalid cycle could consume the aggregation window | `isCurrent(cycle)` required before `lastAggregationAttempt` is set |
+
+Also removed `lastHeavyRefresh` and `healthUpdated`, which were written but never read.
+Four new polling tests cover the tick-while-open, closed-popover, partial-failure, and
+degraded-without-data cases. 73 -> 77.
+
 ## Accept criteria
 
 1. Menu bar icon renders as a template image and changes with state.

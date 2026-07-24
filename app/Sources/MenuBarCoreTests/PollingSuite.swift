@@ -182,6 +182,70 @@ enum PollingSuite {
             }
             t.expect(counter.count >= 2, "expected at least 2 notifications, got \(counter.count)")
         }
+
+        // On-open reads are cheap but not free: running them on every liveness tick
+        // turned two rarely-changing endpoints into 5-second pollers.
+        t.test("polling: a background tick while open does not refetch on-open reads") {
+            StubProtocol.reset([
+                .init(status: 200, body: healthOK, urlError: nil),
+                .init(status: 200, body: providersOK, urlError: nil),
+                .init(status: 200, body: configOK, urlError: nil),
+                .init(status: 200, body: usageOK, urlError: nil),
+                .init(status: 200, body: quotasOK, urlError: nil),
+                .init(status: 200, body: healthOK, urlError: nil),
+            ])
+            let coordinator = makeCoordinator()
+            sync {
+                await coordinator.setPopoverOpen(true)
+                await coordinator.refresh()          // ordinary liveness tick
+            }
+            t.equal(paths().filter { $0 == "/api/providers" }.count, 1, "providers fetched once")
+            t.equal(paths().filter { $0 == "/api/config" }.count, 1, "config fetched once")
+            t.equal(paths().filter { $0 == "/api/startup-health" }.count, 2, "health fetched twice")
+        }
+
+        t.test("polling: a closed popover skips on-open reads entirely") {
+            StubProtocol.reset([
+                .init(status: 200, body: healthOK, urlError: nil),
+                .init(status: 200, body: healthOK, urlError: nil),
+            ])
+            let coordinator = makeCoordinator()
+            sync {
+                await coordinator.refresh()
+                await coordinator.refresh()
+            }
+            t.equal(paths().filter { $0 == "/api/providers" }.count, 0)
+            t.equal(paths().filter { $0 == "/api/usage" }.count, 0)
+        }
+
+        // A failing quota endpoint must not drag its healthy sibling into the 5s tick.
+        t.test("polling: a partial aggregation failure still consumes the interval") {
+            StubProtocol.reset([
+                .init(status: 200, body: healthOK, urlError: nil),
+                .init(status: 200, body: providersOK, urlError: nil),
+                .init(status: 200, body: configOK, urlError: nil),
+                .init(status: 200, body: usageOK, urlError: nil),
+                .init(status: 500, body: "", urlError: nil),        // quotas fail
+                .init(status: 200, body: healthOK, urlError: nil),  // next tick
+            ])
+            let coordinator = makeCoordinator()
+            sync {
+                await coordinator.setPopoverOpen(true)
+                await coordinator.refresh()
+            }
+            t.equal(paths().filter { $0 == "/api/usage" }.count, 1, "usage not refetched after a sibling failure")
+        }
+
+        t.test("polling: degraded without any loaded data does not claim to show data") {
+            StubProtocol.reset([.init(status: 500, body: "", urlError: nil)])
+            let coordinator = makeCoordinator()
+            let snapshot = sync { () -> ProxySnapshot in
+                await coordinator.refresh()
+                return await coordinator.current
+            }
+            t.equal(snapshot.showsData, false, "no data was ever loaded")
+            t.isNil(snapshot.dataAge, "dataAge")
+        }
     }
 
     private struct NoCredentials: CredentialStore {

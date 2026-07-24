@@ -15,7 +15,6 @@ public actor PollingCoordinator {
     private let client: ProxyClient
     private var snapshot: ProxySnapshot
     private var popoverOpen = false
-    private var lastHeavyRefresh: Date?
     private var observers: [UUID: @Sendable (ProxySnapshot) -> Void] = [:]
     /// Rises on every close and on every new refresh, so results from a superseded or
     /// abandoned cycle can be discarded instead of overwriting fresher state.
@@ -82,13 +81,16 @@ public actor PollingCoordinator {
 
         do {
             let health = try await client.health()
-            guard cycle == generation else { return }
+            guard cycle == generation else {
+                refreshInFlight = false
+                await drainPendingRefresh()
+                return
+            }
             snapshot.state = .running(health)
             snapshot.lastKnownStartCommand = health.manualStartCommand
             snapshot.recommendedCommand = health.recommendedCommand
             snapshot.consecutiveFailures = 0
             snapshot.lastUpdated = Date()
-            snapshot.healthUpdated = Date()
         } catch is CancellationError {
             // The popover closed mid-flight. Not a proxy failure; leave state untouched.
             refreshInFlight = false
@@ -107,18 +109,18 @@ public actor PollingCoordinator {
         }
 
         if popoverOpen {
-            // Cheap, changes rarely, and only meaningful while the popover is visible.
-            await refreshOnOpen(cycle: cycle)
+            // Only on an actual open or manual refresh. Running these on every liveness
+            // tick turned two rarely-changing endpoints into 5-second pollers.
+            if includeHeavy { await refreshOnOpen(cycle: cycle) }
 
             // Rate-limit on ATTEMPT, not success: gating on success alone meant one
             // persistently failing endpoint re-fetched its healthy sibling every 5s.
             let aggregationDue = lastAggregationAttempt.map {
                 Date().timeIntervalSince($0) >= Self.heavyInterval
             } ?? true
-            if aggregationDue {
+            if aggregationDue, isCurrent(cycle) {
                 lastAggregationAttempt = Date()
-                let completed = await refreshAggregation(cycle: cycle)
-                if completed { lastHeavyRefresh = Date() }
+                _ = await refreshAggregation(cycle: cycle)
             }
         }
 
