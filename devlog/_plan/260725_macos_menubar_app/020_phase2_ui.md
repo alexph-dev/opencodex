@@ -353,6 +353,25 @@ Also removed `lastHeavyRefresh` and `healthUpdated`, which were written but neve
 Four new polling tests cover the tick-while-open, closed-popover, partial-failure, and
 degraded-without-data cases. 73 -> 77.
 
+### Round 4 (2 findings) — the cost of the panel amendment
+
+Replacing `NSPopover` removed two things it had been providing for free:
+
+| Finding | Correction |
+| --- | --- |
+| The borderless panel had **no surface at all**: `isOpaque = false` plus a clear background composited the dashboard straight onto whatever app was underneath, so labels collided with the app behind and contrast depended on it | Content is wrapped in an `NSVisualEffectView` with `.popover` material, rounded and clipped — the surface `NSPopover` supplies automatically |
+| Presenting the Stop confirmation made the alert key, which tripped `resignKey()` and tore the panel down behind it — a user who chose Cancel was left with nothing | `isPresentingModal` suspends resign-key dismissal; Cancel restores key focus, Confirm dismisses deliberately |
+
+**Why the probe missed the first one:** `UIProbe` rendered the controller inside an
+ordinary `NSWindow`, which supplies its own background. The probe now presents through
+the real `PopoverPanel` over a deliberately loud backdrop, so a missing surface is
+impossible to miss. This is the second time in this phase that the harness, not the
+code, was the thing hiding a defect.
+
+Also folded: `dismiss()` is now idempotent against a late monitor callback,
+`debugTogglePanel()` is `#if DEBUG` only, and `applicationWillTerminate` dismisses the
+panel for lifecycle symmetry.
+
 ## Accept criteria
 
 1. Menu bar icon renders as a template image and changes with state.

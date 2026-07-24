@@ -32,9 +32,48 @@ public final class PopoverPanel: NSPanel {
         hasShadow = true
         isMovable = false
         animationBehavior = .utilityWindow
-
-        contentView?.wantsLayer = true
     }
+
+    /// Wraps the content in a real popover material.
+    ///
+    /// A borderless panel has NO background of its own: without this the dashboard
+    /// composites straight onto whatever application is underneath, so labels collide
+    /// with the app behind it and contrast depends on that app's colours. `NSPopover`
+    /// supplies this surface automatically; a panel must build it.
+    public override var contentViewController: NSViewController? {
+        didSet {
+            guard let content = contentViewController?.view else { return }
+            let effect = NSVisualEffectView()
+            effect.material = .popover
+            effect.blendingMode = .behindWindow
+            effect.state = .active
+            effect.wantsLayer = true
+            effect.layer?.cornerRadius = 10
+            effect.layer?.masksToBounds = true
+            effect.translatesAutoresizingMaskIntoConstraints = false
+
+            let host = NSView()
+            host.addSubview(effect)
+            effect.addSubview(content)
+            content.translatesAutoresizingMaskIntoConstraints = false
+
+            NSLayoutConstraint.activate([
+                effect.topAnchor.constraint(equalTo: host.topAnchor),
+                effect.leadingAnchor.constraint(equalTo: host.leadingAnchor),
+                effect.trailingAnchor.constraint(equalTo: host.trailingAnchor),
+                effect.bottomAnchor.constraint(equalTo: host.bottomAnchor),
+                content.topAnchor.constraint(equalTo: effect.topAnchor),
+                content.leadingAnchor.constraint(equalTo: effect.leadingAnchor),
+                content.trailingAnchor.constraint(equalTo: effect.trailingAnchor),
+                content.bottomAnchor.constraint(equalTo: effect.bottomAnchor),
+            ])
+            contentView = host
+        }
+    }
+
+    /// Suspends resign-key dismissal, so presenting a modal sheet does not tear the
+    /// panel down behind it and strand a user who chose Cancel.
+    public var isPresentingModal = false
 
     public override var canBecomeKey: Bool { true }
     /// Never main: this is chrome, not a document window.
@@ -69,6 +108,8 @@ public final class PopoverPanel: NSPanel {
     }
 
     public func dismiss() {
+        // Idempotent: a late monitor callback must not re-run teardown.
+        guard isVisible else { return }
         removeClickOutsideMonitor()
         orderOut(nil)
         onDismiss?()
@@ -94,7 +135,9 @@ public final class PopoverPanel: NSPanel {
 
     public override func resignKey() {
         super.resignKey()
-        // Losing key focus means the user moved on. Do not linger like a stuck overlay.
+        // Losing key focus means the user moved on — unless we put the focus elsewhere
+        // ourselves by presenting a confirmation.
+        guard !isPresentingModal else { return }
         if isVisible { dismiss() }
     }
 

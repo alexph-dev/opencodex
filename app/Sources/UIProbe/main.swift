@@ -24,14 +24,34 @@ final class ProbeDelegate: NSObject, NSApplicationDelegate {
         let client = ProxyClient(endpoint: endpoint)
         let coordinator = PollingCoordinator(client: client, endpoint: endpoint)
 
-        let w = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 340, height: 300),
+        // A loud backdrop first: if the panel has no surface of its own, this shows
+        // straight through and the defect is unmissable.
+        let backdrop = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 520, height: 620),
             styleMask: [.titled], backing: .buffered, defer: false)
-        w.title = "OpenCodex popover probe"
-        w.contentViewController = controller
-        w.center()
-        w.makeKeyAndOrderFront(nil)
-        window = w
+        backdrop.title = "backdrop"
+        let strip = NSView(frame: NSRect(x: 0, y: 0, width: 520, height: 620))
+        strip.wantsLayer = true
+        strip.layer?.backgroundColor = NSColor.systemRed.cgColor
+        for i in 0..<14 {
+            let bar = NSView(frame: NSRect(x: 0, y: CGFloat(i) * 44, width: 520, height: 22))
+            bar.wantsLayer = true
+            bar.layer?.backgroundColor = NSColor.systemYellow.cgColor
+            strip.addSubview(bar)
+        }
+        backdrop.contentView = strip
+        backdrop.center()
+        backdrop.makeKeyAndOrderFront(nil)
+
+        // Present through the real panel so its surface (or absence of one) is captured.
+        let realPanel = PopoverPanel()
+        realPanel.contentViewController = controller
+        controller.view.layoutSubtreeIfNeeded()
+        let size = controller.preferredContentSize
+        realPanel.setContentSize(NSSize(width: 340, height: max(size.height, 200)))
+        realPanel.setFrameOrigin(NSPoint(x: backdrop.frame.midX - 170, y: backdrop.frame.midY - 150))
+        realPanel.makeKeyAndOrderFront(nil)
+        window = realPanel
         NSApp.activate(ignoringOtherApps: true)
 
         Task {
@@ -77,6 +97,7 @@ final class ProbeDelegate: NSObject, NSApplicationDelegate {
                 let h = self.controller.preferredContentSize.height
                 if h > 0, let w = self.window {
                     w.setContentSize(NSSize(width: 340, height: h))
+                    w.setFrameOrigin(NSPoint(x: w.frame.origin.x, y: w.frame.origin.y))
                 }
             }
             try? await Task.sleep(nanoseconds: 1_200_000_000)

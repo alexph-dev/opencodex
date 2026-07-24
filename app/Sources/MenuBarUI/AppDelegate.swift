@@ -64,6 +64,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
     public func applicationWillTerminate(_ notification: Notification) {
         pollTask?.cancel()
         removeEscapeMonitor()
+        panel.dismiss()
     }
 
     // MARK: - Polling
@@ -94,9 +95,12 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: - Actions
 
+    #if DEBUG
     /// Testing hook: drives the exact presentation path a status-item click uses, so a
     /// harness can verify key focus and Escape without Accessibility permission.
+    /// Debug-only — it is not part of the shipped surface.
     public func debugTogglePanel() { togglePopover() }
+    #endif
 
     @objc private func togglePopover() {
         guard let button = statusItem?.button else { return }
@@ -149,8 +153,18 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         alert.addButton(withTitle: "Stop proxy")
         alert.addButton(withTitle: "Cancel")
 
+        // The alert takes key focus, which would otherwise trip resignKey and dismiss
+        // the panel behind it — leaving a user who chose Cancel with nothing.
+        panel.isPresentingModal = true
         NSApp.activate(ignoringOtherApps: true)
-        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        let confirmed = alert.runModal() == .alertFirstButtonReturn
+        panel.isPresentingModal = false
+
+        guard confirmed else {
+            panel.makeKeyAndOrderFront(nil)
+            return
+        }
+        panel.dismiss()
 
         Task { [client, coordinator] in
             try? await client?.stop()
