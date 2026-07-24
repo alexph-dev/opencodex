@@ -205,11 +205,18 @@ setTimeout(async () => { await drainAndShutdown(...); process.exit(0); }, 200);
 return jsonResponse({ success: true, message: "Proxy stopping, native Codex restored." });
 ```
 
-Two consequences, both load-bearing:
+The response body carries a `success` boolean: `false` when `restoreNativeCodex()`
+failed, in which case the proxy still exits but native Codex is left pointing at a port
+that is about to close. Clients should decode the boolean and tell the user to run
+`ocx restore`; the accompanying `message` is a server-formatted string and should not be
+surfaced verbatim.
+
+Three consequences, all load-bearing:
 
 1. **It answers `200` before draining.** The app treats `200` as "stop accepted", not
    "stopped", and re-probes until the port stops answering.
-2. **It calls `stopServiceIfInstalled()` first — deliberately stopping launchd so the
+2. **A 200 does not mean the restore succeeded.** See the `success` flag above.
+3. **It calls `stopServiceIfInstalled()` first — deliberately stopping launchd so the
    supervisor cannot respawn the proxy.** A service-managed proxy therefore stays down.
    **There is no automatic restart, and no start endpoint exists.** Any UI that says
    "Restart" would be lying. See `030` for the corrected action design.

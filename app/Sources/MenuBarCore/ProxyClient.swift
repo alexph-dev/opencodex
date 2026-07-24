@@ -90,17 +90,40 @@ public actor ProxyClient {
         return envelope.reports ?? []
     }
 
-    /// Cheapest possible liveness probe.
-    public func isReachable() async -> Bool {
+    /// What a liveness probe actually established.
+    ///
+    /// Three states, not two. "Did not get a usable answer" and "nothing is listening"
+    /// are different facts, and conflating them let a stop be reported as confirmed
+    /// while an HTTP server was still running behind a 500 or a decode failure.
+    public enum Liveness: Equatable, Sendable {
+        /// Something answered — any HTTP status, including 401/403/500, or a body we
+        /// could not decode. The port is occupied.
+        case reachable
+        /// The connection was refused. This is the only proof that the proxy is gone.
+        case refused
+        /// A timeout or other transport failure: no conclusion either way.
+        case indeterminate
+    }
+
+    public func liveness() async -> Liveness {
         do {
             _ = try await settings()
-            return true
-        } catch ProxyError.unauthorized {
-            // Answering 401 still proves something is listening.
-            return true
+            return .reachable
+        } catch ProxyError.unauthorized, ProxyError.decoding {
+            // Both prove a server answered.
+            return .reachable
+        } catch ProxyError.http {
+            return .reachable
+        } catch ProxyError.unreachable {
+            return .refused
         } catch {
-            return false
+            return .indeterminate
         }
+    }
+
+    /// Convenience for callers that only need "is anything there".
+    public func isReachable() async -> Bool {
+        await liveness() != .refused
     }
 
     // MARK: - Writes
@@ -108,10 +131,22 @@ public actor ProxyClient {
     /// `POST /api/stop`. Returns once the proxy has accepted the request.
     ///
     /// The proxy answers 200 *before* draining, and it stops the launchd service first so
-    /// nothing respawns it. Callers must poll `isReachable()` rather than treat this
-    /// return as "stopped".
-    public func stop() async throws {
-        _ = try await send(method: "POST", path: "api/stop", body: nil as EmptyBody?)
+    /// nothing respawns it. Callers must poll `liveness()` rather than treat this return
+    /// as "stopped".
+    ///
+    /// The response carries `success: false` when `restoreNativeCodex()` failed
+    /// (`src/server/management-api.ts:145-147`): the proxy still shuts down, but native
+    /// Codex was left pointing at a port that is about to close. Only the boolean is
+    /// decoded — the accompanying message is a server-formatted string and never reaches
+    /// the UI.
+    @discardableResult
+    public func stop() async throws -> Bool {
+        let data = try await send(method: "POST", path: "api/stop", body: nil as EmptyBody?)
+        guard let result = try? JSONDecoder().decode(StopResult.self, from: data) else {
+            // An undecodable body is not a reason to claim the restore failed.
+            return true
+        }
+        return result.success ?? true
     }
 
     /// `PATCH /api/providers?name=<name>` with a body of exactly `{"disabled": <bool>}`.
@@ -237,6 +272,10 @@ private struct QuotaEnvelope: Decodable {
 
 private struct ProviderDisabledPatch: Encodable {
     let disabled: Bool
+}
+
+private struct StopResult: Decodable {
+    let success: Bool?
 }
 
 private struct EmptyBody: Encodable {}

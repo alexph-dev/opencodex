@@ -18,11 +18,30 @@ final class StubProtocol: URLProtocol, @unchecked Sendable {
         lock.lock(); defer { lock.unlock() }
         queue = responses
         recorded = []
+        bodies = []
     }
+
+    nonisolated(unsafe) static var bodies: [Data] = []
 
     static func record(_ request: URLRequest) {
         lock.lock(); defer { lock.unlock() }
         recorded.append(request)
+        // URLProtocol replaces httpBody with a stream, so read it here or the body is
+        // unobservable — which let an "exact body" assertion pass with no body at all.
+        if let body = request.httpBody {
+            bodies.append(body)
+        } else if let stream = request.httpBodyStream {
+            stream.open()
+            var data = Data()
+            var buffer = [UInt8](repeating: 0, count: 1024)
+            while stream.hasBytesAvailable {
+                let read = stream.read(&buffer, maxLength: buffer.count)
+                if read <= 0 { break }
+                data.append(buffer, count: read)
+            }
+            stream.close()
+            bodies.append(data)
+        }
     }
 
     static func next() -> Response? {
@@ -238,12 +257,15 @@ enum TransportSuite {
             let url = request?.url?.absoluteString ?? ""
             t.expect(url.contains("name=anthropic"), "expected name=anthropic in \(url)")
 
-            // URLProtocol strips httpBody into a stream, so assert on the encoder directly.
-            let encoded = String(
-                data: try JSONEncoder().encode(["disabled": true]),
-                encoding: .utf8
-            )
-            t.equal(encoded, #"{"disabled":true}"#)
+            // Assert on the ACTUAL request body. An earlier version encoded its own
+            // dictionary and compared that, so it would have passed with no body at all.
+            guard let body = StubProtocol.bodies.first else {
+                t.expect(false, "no request body captured")
+                return
+            }
+            let decoded = try JSONSerialization.jsonObject(with: body) as? [String: Any]
+            t.equal(decoded?.keys.sorted() ?? [], ["disabled"], "body must carry only 'disabled'")
+            t.equal(decoded?["disabled"] as? Bool, true)
         }
 
         t.test("liveness: a 401 still proves something is listening") {

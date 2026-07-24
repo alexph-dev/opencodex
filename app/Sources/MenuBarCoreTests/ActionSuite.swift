@@ -152,20 +152,107 @@ enum ActionSuite {
             }
             t.equal(outcome, .failed(ProxyError.unreachable.userMessage))
         }
+        // Was tautological: it built its own non-empty literals and then asserted they
+        // were non-empty. Now drives real failures and checks the message the user sees.
+        t.test("actions: every real failure path produces a usable message") {
+            StubProtocol.reset([.init(status: 0, body: "", urlError: .cannotConnectToHost)])
+            let unreachable = sync { await makeCoordinator().setProvider("x", disabled: false, defaultProvider: nil) }
 
-        t.test("actions: no outcome message is empty") {
-            let outcomes: [ActionOutcome] = [
-                .succeeded,
-                .requiresManualStart("ocx start"),
-                .failed("something went wrong"),
-            ]
-            for outcome in outcomes {
-                switch outcome {
-                case .succeeded: break
-                case .requiresManualStart(let value), .failed(let value):
-                    t.expect(!value.isEmpty, "outcome carried an empty message")
+            StubProtocol.reset([.init(status: 400, body: "raw body", urlError: nil)])
+            let rejected = sync { await makeCoordinator().setProvider("x", disabled: true, defaultProvider: "openai") }
+
+            let guarded = sync { await makeCoordinator().setProvider("openai", disabled: true, defaultProvider: "openai") }
+
+            for outcome in [unreachable, rejected, guarded] {
+                guard case .failed(let message) = outcome else {
+                    t.expect(false, "expected .failed, got \(outcome)")
+                    continue
                 }
+                t.expect(!message.isEmpty, "empty failure message")
+                t.expect(message.hasSuffix(".") || message.hasSuffix("!"),
+                         "message should read as a sentence: \(message)")
+                t.expect(!message.contains("raw body"), "leaked body: \(message)")
             }
+        }
+
+        // The stop response carries success:false when restoreNativeCodex() failed
+        // (src/server/management-api.ts:145-147). The proxy still shuts down, but native
+        // Codex is left pointing at a port that is closing.
+        t.test("stop: a restore failure is reported, not swallowed as success") {
+            StubProtocol.reset([
+                .init(status: 200, body: #"{"success":false,"message":"restore failed: /some/path"}"#, urlError: nil),
+                .init(status: 0, body: "", urlError: .cannotConnectToHost),
+            ])
+            let outcome = sync { await makeCoordinator().stop(startCommand: "ocx start") }
+            t.equal(outcome, .stoppedWithRestoreFailure("ocx start"))
+        }
+
+        t.test("stop: a success:true body reports the ordinary manual-start outcome") {
+            StubProtocol.reset([
+                .init(status: 200, body: #"{"success":true,"message":"ok"}"#, urlError: nil),
+                .init(status: 0, body: "", urlError: .cannotConnectToHost),
+            ])
+            t.equal(sync { await makeCoordinator().stop(startCommand: "ocx start") },
+                    .requiresManualStart("ocx start"))
+        }
+
+        // Only a refused connection proves the proxy is gone. A 500 or an undecodable
+        // 200 means an HTTP server is still listening.
+        t.test("stop: a 500 during polling is not mistaken for a stopped proxy") {
+            var responses: [StubProtocol.Response] = [.init(status: 200, body: "{}", urlError: nil)]
+            responses.append(contentsOf: Array(
+                repeating: .init(status: 500, body: "", urlError: nil), count: 400))
+            StubProtocol.reset(responses)
+            let clock = FakeClock()
+            let outcome = sync { await makeCoordinator(clock: clock).stop(startCommand: "ocx start") }
+            if case .failed(let message) = outcome {
+                t.expect(message.contains("still responding"), "expected a timeout, got \(message)")
+            } else {
+                t.expect(false, "expected .failed, got \(outcome)")
+            }
+        }
+
+        t.test("stop: an undecodable 200 during polling still counts as reachable") {
+            var responses: [StubProtocol.Response] = [.init(status: 200, body: "{}", urlError: nil)]
+            responses.append(contentsOf: Array(
+                repeating: .init(status: 200, body: "not json", urlError: nil), count: 400))
+            StubProtocol.reset(responses)
+            let clock = FakeClock()
+            let outcome = sync { await makeCoordinator(clock: clock).stop(startCommand: "ocx start") }
+            if case .failed = outcome {
+                t.expect(true, "timed out rather than claiming success")
+            } else {
+                t.expect(false, "expected .failed, got \(outcome)")
+            }
+        }
+
+        t.test("provider: a second write while one is in flight is refused, not raced") {
+            StubProtocol.reset([
+                .init(status: 200, body: "{}", urlError: nil),
+                .init(status: 200, body: "{}", urlError: nil),
+            ])
+            let coordinator = makeCoordinator()
+            let outcomes: [ActionOutcome] = sync {
+                async let first = coordinator.setProvider("x", disabled: true, defaultProvider: nil)
+                async let second = coordinator.setProvider("x", disabled: false, defaultProvider: nil)
+                return await [first, second]
+            }
+            let refused = outcomes.filter { if case .failed = $0 { return true }; return false }
+            t.equal(refused.count, 1, "exactly one of the two concurrent writes is refused")
+        }
+
+        t.test("provider: writes to different providers are not blocked by each other") {
+            StubProtocol.reset([
+                .init(status: 200, body: "{}", urlError: nil),
+                .init(status: 200, body: "{}", urlError: nil),
+            ])
+            let coordinator = makeCoordinator()
+            let outcomes: [ActionOutcome] = sync {
+                async let a = coordinator.setProvider("a", disabled: true, defaultProvider: nil)
+                async let b = coordinator.setProvider("b", disabled: true, defaultProvider: nil)
+                return await [a, b]
+            }
+            t.equal(outcomes, [.succeeded, .succeeded])
         }
     }
 }

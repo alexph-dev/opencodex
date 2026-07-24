@@ -84,7 +84,7 @@ heavier build stack for a project whose premise is a single Bun process, and
 `macOSPrivateApi: true` — a notarization and App-Store-rejection risk that `NSPopover`
 avoids through public API.
 
-The four-tab layout became a single scroll-free column so the primary question — "is it
+The four-tab layout became a single column with a bounded scrolling middle so the primary question — "is it
 running?" — is answered without a click.
 
 Both comments state that the work is not discarded, point at this devlog unit, and invite

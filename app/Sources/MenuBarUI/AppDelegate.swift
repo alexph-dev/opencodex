@@ -191,6 +191,12 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
                 case .requiresManualStart(let command):
                     // Not a failure — the API has no start endpoint by design.
                     self?.controller.showResult("Proxy stopped. Start it again with \(command)", isError: false)
+                case .stoppedWithRestoreFailure(let command):
+                    // The proxy is down but native Codex still points at the dead port.
+                    self?.controller.showResult(
+                        "Proxy stopped, but restoring native Codex failed. Run `ocx restore`, then \(command)",
+                        isError: true
+                    )
                 case .failed(let message):
                     self?.controller.showResult(message, isError: true)
                 }
@@ -202,6 +208,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
     /// rather than leave the UI showing a state the proxy refused.
     private func toggleProvider(_ name: String, disable: Bool) {
         let defaultProvider = latest?.defaultProvider
+        controller.setProviderBusy(name, true)
 
         Task { [actions, coordinator] in
             let outcome = await actions?.setProvider(name, disabled: disable, defaultProvider: defaultProvider)
@@ -213,14 +220,20 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
                         disable ? "\(name) disabled." : "\(name) enabled.",
                         isError: false
                     )
-                case .failed(let message), .requiresManualStart(let message):
+                case .failed(let message):
                     self?.controller.revertProvider(name, to: !disable)
                     self?.controller.showResult(message, isError: true)
+                case .requiresManualStart, .stoppedWithRestoreFailure:
+                    // Not reachable for a provider write.
+                    break
                 }
             }
             // Re-read so the summary line and switch states match the proxy, not our
             // optimistic guess.
             await coordinator?.refresh(includeHeavy: true)
+            await MainActor.run { [weak self] in
+                self?.controller.setProviderBusy(name, false)
+            }
         }
     }
 }

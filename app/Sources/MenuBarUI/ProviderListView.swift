@@ -11,6 +11,8 @@ final class ProviderListView: NSView {
     private let rows = NSStackView()
     private var expanded = false
     private var snapshot: ProxySnapshot?
+    /// Providers with a write in flight; their rows must not be reset by a poll.
+    private var pending: Set<String> = []
 
     /// `(provider, shouldDisable)`.
     var onToggle: ((String, Bool) -> Void)?
@@ -88,6 +90,8 @@ final class ProviderListView: NSView {
             ) { [weak self] shouldDisable in
                 self?.onToggle?(provider.name, shouldDisable)
             }
+            // A refresh that lands mid-write must not undo the optimistic state.
+            if pending.contains(provider.name) { row.setBusy(true) }
             row.translatesAutoresizingMaskIntoConstraints = false
             rows.addArrangedSubview(row)
             row.widthAnchor.constraint(equalTo: rows.widthAnchor).isActive = true
@@ -104,8 +108,20 @@ final class ProviderListView: NSView {
 
     /// Reverts a switch after the proxy rejected the change.
     func revert(_ name: String, to enabled: Bool) {
+        pending.remove(name)
         for case let row as ProviderRowView in rows.arrangedSubviews where row.providerName == name {
             row.setEnabled(enabled)
+            row.setBusy(false)
+        }
+    }
+
+    /// Marks a provider as having a write in flight. Its switch stays inert until the
+    /// authoritative refresh lands, so a poll cannot resurrect the pre-toggle state and
+    /// a second click cannot race the first.
+    func setBusy(_ name: String, _ busy: Bool) {
+        if busy { pending.insert(name) } else { pending.remove(name) }
+        for case let row as ProviderRowView in rows.arrangedSubviews where row.providerName == name {
+            row.setBusy(busy)
         }
     }
 }
@@ -114,6 +130,8 @@ final class ProviderRowView: NSView {
     let providerName: String
     private let toggle = NSSwitch()
     private let onToggle: (Bool) -> Void
+    private var baseEnabled = true
+    private var isBusy = false
 
     init(provider: ProviderSummary, isDefault: Bool, onToggle: @escaping (Bool) -> Void) {
         self.providerName = provider.name
@@ -137,12 +155,16 @@ final class ProviderRowView: NSView {
         toggle.target = self
         toggle.action = #selector(switched)
 
-        // The proxy rejects disabling the default provider with a 400, so the control is
-        // inert and explains itself rather than offering an action that cannot succeed.
-        toggle.isEnabled = !isDefault
-        toggle.toolTip = isDefault
+        // The proxy rejects only DISABLING the default provider (`provider-routes.ts:178`
+        // guards on `rawBody.disabled && name === defaultProvider`). Enabling it is
+        // valid, so a default provider that is currently off must stay toggleable —
+        // otherwise the app strands the user in a state it cannot leave.
+        let wouldDisableDefault = isDefault && provider.isEnabled
+        toggle.isEnabled = !wouldDisableDefault
+        toggle.toolTip = wouldDisableDefault
             ? "This is the default provider. Choose another default in the dashboard first."
             : nil
+        baseEnabled = toggle.isEnabled
         toggle.setAccessibilityLabel("\(provider.name) enabled")
 
         let row = NSStackView(views: [labels, NSView(), toggle])
@@ -162,6 +184,13 @@ final class ProviderRowView: NSView {
     required init?(coder: NSCoder) { nil }
 
     func setEnabled(_ enabled: Bool) { toggle.state = enabled ? .on : .off }
+
+    /// Inert while its write is in flight, so a second click cannot race the first.
+    func setBusy(_ busy: Bool) {
+        isBusy = busy
+        toggle.isEnabled = busy ? false : baseEnabled
+        alphaValue = busy ? 0.6 : 1
+    }
 
     @objc private func switched() {
         // Optimistic: the switch has already moved. The caller reverts on failure.

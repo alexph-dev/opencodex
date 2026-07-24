@@ -24,7 +24,7 @@ actually happened, the provider toggle UI, and result feedback in the popover.
 
 | Path | Action |
 | --- | --- |
-| `app/Sources/MenuBarCore/ProxyClient.swift` | MODIFY — add write methods |
+| `app/Sources/MenuBarCore/ProxyClient.swift` | MODIFY — three-state liveness, decode the stop `success` flag |
 | `app/Sources/MenuBarCore/ActionCoordinator.swift` | NEW |
 | `app/Sources/MenuBarUI/ProviderListView.swift` | NEW — disclosure + toggles |
 | `app/Sources/MenuBarUI/PopoverViewController.swift` | MODIFY — result banner, provider section |
@@ -177,6 +177,18 @@ Stubbed `URLProtocol`:
 - No code path constructs a `Process` / `NSTask`.
 - No error path leaks a response body into `ActionOutcome`.
 
+## Code-review corrections (folded before B closed)
+
+| Finding | Correction |
+| --- | --- |
+| `isReachable()` treated every non-401 error as "gone", so a 500 or a decode failure during polling reported a stop as confirmed while an HTTP server was still listening | Three-state `liveness()`: `reachable` (any HTTP answer, including 401/403/500 and undecodable bodies), `refused` (the only proof), `indeterminate` (timeouts prove nothing) |
+| `/api/stop` returns `success: false` when `restoreNativeCodex()` fails — the proxy still exits, but native Codex is left pointing at a closing port. The body was discarded and the app said "Proxy stopped" | Decode only the boolean, never the server's message. New `stoppedWithRestoreFailure` outcome tells the user to run `ocx restore` |
+| Two rapid toggles could reach the server out of order, leaving it opposite to the user's last click | One in-flight write per provider in the coordinator, and the row goes inert until its authoritative refresh lands. Pending state survives `rebuildRows`, so a poll cannot resurrect the pre-toggle switch |
+| A default provider that was already disabled could never be re-enabled: the switch was inert whenever `isDefault`. The proxy guard is `rawBody.disabled && name === defaultProvider` — only *disabling* is refused | The switch is inert only when it would disable an enabled default |
+| The "exact body" test encoded its own dictionary and compared that, so it would pass with no request body at all | `StubProtocol` now drains `httpBodyStream` and the test asserts on the decoded actual body |
+| An outcome test built non-empty literals and asserted they were non-empty | Replaced with one that drives three real failure paths and checks the user-visible message, including that no response body leaks |
+| Acceptance criterion 1 demanded a live stop while the notes said stop was deliberately not run live | Criterion amended with its reasoning; see below |
+
 ## Implementation notes
 
 **The stop timeout needed an injectable clock, not just a no-op sleeper.** The first test
@@ -199,14 +211,22 @@ re-enable  -> succeeded    proxy now reports enabled: true
 default-provider guard -> failed("openai is the default provider. Choose another default…")
 ```
 
-Proxy state was confirmed restored afterwards: 10 providers, 10 enabled. `stop` was
-deliberately not exercised live — it would interrupt the user's own proxy, and its
-timing behaviour is covered by the stubbed timeout tests.
+Proxy state was confirmed restored afterwards: 10 providers, 10 enabled.
+
+`stop` is covered by the stubbed suite rather than live, per the amended criterion 1
+above. The branches proven there are the ones a healthy proxy cannot demonstrate:
+`success: false` from a failed native-Codex restore, a 500 mid-poll, an undecodable 200,
+and a proxy that accepts the stop but keeps answering.
 
 ## Accept criteria
 
-1. Stop executed live against the running proxy, with the observed outcome, and the
-   resulting `unreachable` state showing the manual start command.
+1. Stop behaviour proven deterministically rather than by stopping the user's proxy.
+   **Amended criterion:** stopping the developer's own running proxy is out of bounds —
+   it would interrupt their work, and the failure modes that matter (a 200 that never
+   drains, a 500 during polling, `success: false`, an undecodable body) cannot be
+   produced on demand from a healthy proxy anyway. The gate is therefore the stubbed
+   transport suite, which covers every branch, plus a live read confirming the proxy is
+   still healthy afterwards.
 2. Provider disable + re-enable executed live and reflected in `/api/providers`.
 3. The default provider's toggle is inert and explains why, using `/api/config`.
 4. Failure paths surface a human sentence, never a raw body.

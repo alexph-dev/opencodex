@@ -5,6 +5,9 @@ public enum ActionOutcome: Equatable, Sendable {
     case succeeded
     /// The stop was confirmed, but nothing will restart the proxy — the user has to.
     case requiresManualStart(String)
+    /// The proxy stopped, but it could not restore native Codex on the way out, so the
+    /// user's Codex config still points at a port that is now closed.
+    case stoppedWithRestoreFailure(String)
     /// A human sentence. Never a response body: bodies can echo configuration.
     case failed(String)
 }
@@ -20,6 +23,10 @@ public actor ActionCoordinator {
     public static let pollInterval: TimeInterval = 0.5
 
     private let client: ProxyClient
+    /// One in-flight write per provider. Both this actor and `ProxyClient` are reentrant
+    /// across network awaits, so two rapid toggles could otherwise reach the server out
+    /// of order and leave it opposite to the user's last click.
+    private var inFlight: Set<String> = []
     private let sleeper: @Sendable (TimeInterval) async -> Void
     /// Injected so tests can advance time without waiting for it. A no-op sleeper alone
     /// is not enough: the loop is bounded by a deadline, so the clock has to move too.
@@ -43,8 +50,9 @@ public actor ActionCoordinator {
     /// 200 means "accepted", not "stopped". Reporting success on the response alone
     /// would make the UI claim a state the system has not reached yet.
     public func stop(startCommand: String) async -> ActionOutcome {
+        let restored: Bool
         do {
-            try await client.stop()
+            restored = try await client.stop()
         } catch let error as ProxyError {
             return .failed(error.userMessage)
         } catch {
@@ -52,13 +60,28 @@ public actor ActionCoordinator {
         }
 
         let deadline = now().addingTimeInterval(Self.stopTimeout)
+        var sawIndeterminate = false
         while now() < deadline {
             await sleeper(Self.pollInterval)
-            if await !client.isReachable() {
-                return .requiresManualStart(startCommand)
+            switch await client.liveness() {
+            case .refused:
+                // The only proof the proxy is actually gone.
+                return restored
+                    ? .requiresManualStart(startCommand)
+                    : .stoppedWithRestoreFailure(startCommand)
+            case .reachable:
+                sawIndeterminate = false
+            case .indeterminate:
+                // A timeout proves nothing; keep polling rather than declaring victory.
+                sawIndeterminate = true
             }
         }
-        return .failed("The proxy accepted the stop but was still responding after \(Int(Self.stopTimeout)) seconds.")
+
+        return .failed(
+            sawIndeterminate
+                ? "The proxy accepted the stop, but its state could not be confirmed. Check with `ocx status`."
+                : "The proxy accepted the stop but was still responding after \(Int(Self.stopTimeout)) seconds."
+        )
     }
 
     /// Enables or disables a provider.
@@ -74,6 +97,12 @@ public actor ActionCoordinator {
         if disabled, name == defaultProvider {
             return .failed("\(name) is the default provider. Choose another default in the dashboard first.")
         }
+        guard !inFlight.contains(name) else {
+            return .failed("A change to \(name) is still in progress.")
+        }
+        inFlight.insert(name)
+        defer { inFlight.remove(name) }
+
         do {
             try await client.setProviderDisabled(name, disabled: disabled)
             return .succeeded
