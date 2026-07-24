@@ -194,10 +194,14 @@ assertion, `ditto` archiving with archive-content verification, SHA-256 sidecar,
 first-launch documentation angle.
 
 From **#421 (genglintong)** — product architecture: HTTP management-API transport,
-`runtime-port.json` discovery with a 10100 fallback, auth token held outside the
-rendering layer, the four-surface information architecture (usage / health / status /
-activity), tabular-numeral stat treatment, and skipping auth entirely when the proxy has
-no `apiKeys` configured.
+`runtime-port.json` discovery with a 10100 fallback, Keychain-backed key storage, the
+usage / health / status information set, tabular-numeral stat treatment, and skipping auth
+entirely when the proxy has no `apiKeys` configured.
+
+Two things from that branch are deliberately NOT carried over: renderer-side token
+isolation (§2 shows the token does reach renderer memory at `049ef2ac`, so there is
+nothing to adopt), and the per-request activity surface (`002` §3 records why it is
+excluded from v1).
 
 The contributor's review-response discipline at `049ef2ac` also directly improved this
 plan: the audit that caught this document's own stale claims used that head as evidence.

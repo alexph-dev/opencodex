@@ -7,8 +7,8 @@
 **Bundle scope note (audit correction):** an earlier draft closed this phase on a
 `.app` produced by `scripts/build-macos-app.sh`, but that script is a Phase-4
 deliverable — a phase cannot be verified by a later phase's output. Phase 1 therefore
-closes on the compiler and the test suite. The first launchable bundle is a Phase-2
-deliverable (it needs the UI to be worth launching), and Phase 4 hardens and packages it.
+closes on the compiler and the test suite. Phase 2 does its visual QA with `swift run`,
+and **Phase 4 owns the bundle end to end**: the builder, the first `.app`, and packaging.
 
 ## File change map
 

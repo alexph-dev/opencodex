@@ -137,4 +137,5 @@ another contributor's machine.
    commit at the moment of posting.
 4. `feat/macos-app` pushed; remote SHA equals local `HEAD`.
 5. `bun run typecheck`, `bun run test`, `bun run privacy:scan` green on the final tree.
-6. No absolute developer home path in any tracked file, including `devlog/`.
+6. No absolute developer home path in any file this unit adds or modifies, including its
+   `devlog/` docs. Pre-existing paths in unrelated historical devlogs are out of scope.

@@ -271,8 +271,10 @@ Constraints honoured:
 - `app/.gitignore` excludes `.build/`, `.swiftpm/`, `DerivedData/` (landed in `010`).
 - Root `.gitignore` excludes `dist/macos/`.
 - `git ls-files app/ | grep -E '\.build/|DerivedData/'` must return empty.
-- No absolute developer path appears in any committed file — this is the exact defect
-  that blocked PR #421 (`001` §2), and it is checked explicitly rather than assumed.
+- No absolute developer path appears in **any file this unit adds or modifies** — checked
+  explicitly rather than assumed. Pre-existing paths in unrelated historical devlogs are
+  out of scope (`000` criterion 8). This mirrors the artifact defect the Codex reviewer
+  originally raised on PR #421, which that contributor has since fixed (`001` §2.1).
 
 ## Accept criteria
 
