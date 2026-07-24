@@ -282,24 +282,27 @@ enum PollingSuite {
             _ = t.notNil(snapshot.lastUpdated, "lastUpdated after refreshAndWait")
         }
 
-        // The previous two tests both ran with refreshInFlight == false, so they never
-        // entered waitForCompletion() at all — they would have stayed green if the
-        // continuation never resumed. This one holds a refresh suspended so the
-        // coalescing path is the one under test.
+        // The first two refreshAndWait tests ran with refreshInFlight == false, so they
+        // never entered waitForCompletion() at all. These hold a cycle suspended in the
+        // stub so the coalescing path is the one under test.
         t.test("polling: refreshAndWait suspends behind an in-flight cycle and resumes") {
             StubProtocol.reset(Array(
                 repeating: .init(status: 200, body: healthOK, urlError: nil), count: 20))
             let gate = DispatchSemaphore(value: 0)
-            StubProtocol.gate = gate
+            StubProtocol.setGate(gate)
+            defer {
+                StubProtocol.setGate(nil)
+                for _ in 0..<40 { gate.signal() }
+            }
 
             let coordinator = makeCoordinator()
             let returned = Flag()
 
-            // Cycle 1 blocks inside the stub.
             let first = Task { await coordinator.refresh() }
-            Thread.sleep(forTimeInterval: 0.2)
+            // Wait for the request to actually reach the gate rather than guessing.
+            t.equal(StubProtocol.gateEntered.wait(timeout: .now() + 5), .success,
+                    "cycle 1 should reach the gate")
 
-            // Cycle 2 must queue behind it and stay suspended.
             let waiter = Task {
                 await coordinator.refreshAndWait()
                 returned.set()
@@ -307,35 +310,63 @@ enum PollingSuite {
             Thread.sleep(forTimeInterval: 0.3)
             t.equal(returned.value, false, "refreshAndWait must not return while a cycle is in flight")
 
-            // Release everything and let the queued cycle finish.
-            StubProtocol.gate = nil
+            StubProtocol.setGate(nil)
             for _ in 0..<40 { gate.signal() }
             sync { _ = await first.value; _ = await waiter.value }
             t.equal(returned.value, true, "refreshAndWait must resume once the queued cycle publishes")
         }
 
-        t.test("polling: a waiter is released even when the queued cycle fails") {
-            var responses = Array(repeating: StubProtocol.Response(status: 200, body: healthOK, urlError: nil), count: 3)
+        // The queued cycle must FAIL here. Two contract details drive the setup:
+        // drainPendingRefresh only runs while the popover is OPEN, and an open cycle
+        // consumes health + providers + config + usage + quotas. So the popover is
+        // opened first (consuming its own cycle), then one gated 200 lets cycle 1 reach
+        // the gate, and every response after that is a refusal. An earlier version
+        // queued three 200s with the popover closed and silently re-tested the success
+        // path — which is exactly what the new state assertion caught.
+        t.test("polling: a waiter is released when the queued cycle fails") {
+            StubProtocol.reset([
+                .init(status: 200, body: healthOK, urlError: nil),
+                .init(status: 200, body: providersOK, urlError: nil),
+                .init(status: 200, body: configOK, urlError: nil),
+                .init(status: 200, body: usageOK, urlError: nil),
+                .init(status: 200, body: quotasOK, urlError: nil),
+            ])
+            let coordinator = makeCoordinator()
+            sync { await coordinator.setPopoverOpen(true) }
+
+            var responses: [StubProtocol.Response] = [.init(status: 200, body: healthOK, urlError: nil)]
             responses.append(contentsOf: Array(
-                repeating: .init(status: 0, body: "", urlError: .cannotConnectToHost), count: 20))
+                repeating: .init(status: 0, body: "", urlError: .cannotConnectToHost), count: 30))
             StubProtocol.reset(responses)
             let gate = DispatchSemaphore(value: 0)
-            StubProtocol.gate = gate
+            StubProtocol.setGate(gate)
+            defer {
+                StubProtocol.setGate(nil)
+                for _ in 0..<60 { gate.signal() }
+            }
 
-            let coordinator = makeCoordinator()
             let returned = Flag()
             let first = Task { await coordinator.refresh() }
-            Thread.sleep(forTimeInterval: 0.2)
+            t.equal(StubProtocol.gateEntered.wait(timeout: .now() + 5), .success,
+                    "cycle 1 should reach the gate")
+
             let waiter = Task {
                 await coordinator.refreshAndWait()
                 returned.set()
             }
-            Thread.sleep(forTimeInterval: 0.2)
+            Thread.sleep(forTimeInterval: 0.3)
+            t.equal(returned.value, false, "must still be suspended")
 
-            StubProtocol.gate = nil
-            for _ in 0..<40 { gate.signal() }
-            sync { _ = await first.value; _ = await waiter.value }
+            StubProtocol.setGate(nil)
+            for _ in 0..<60 { gate.signal() }
+            let snapshot = sync { () -> ProxySnapshot in
+                _ = await first.value
+                _ = await waiter.value
+                return await coordinator.current
+            }
             t.equal(returned.value, true, "a failing queued cycle must still release its waiter")
+            // Proves the refusal was actually consumed, not a second 200.
+            t.equal(snapshot.state, .unreachable, "the queued cycle must have failed")
         }
 
         t.test("polling: refreshAndWait survives a failing cycle without hanging") {

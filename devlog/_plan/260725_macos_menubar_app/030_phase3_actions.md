@@ -201,16 +201,32 @@ Stubbed `URLProtocol`:
 
 ## Code-review corrections (folded before B closed)
 
+### Round 5
+
+| Finding | Correction |
+| --- | --- |
+| The "queued cycle fails" test never consumed a failure: with the popover closed a cycle takes exactly one health response, and the queue led with three 200s, so it re-tested the success path | The popover is opened first (consuming its own five-response cycle), then one gated 200 followed by refusals. A new `snapshot.state == .unreachable` assertion proves the failure was actually consumed — and it is what caught this |
+| The gate was read and written without the stub's lock, and the test inferred "the request reached the gate" from a 200ms sleep | `setGate`/`currentGate` go through the same lock, a `gateEntered` semaphore lets the test wait for the request to actually arrive, and `defer` releases the gate so a mid-test failure cannot wedge the suite |
+
 ### Round 4
 
 | Finding | Correction |
 | --- | --- |
 | Both `refreshAndWait` tests ran with `refreshInFlight == false`, so neither entered `waitForCompletion()`. They would have stayed green if the continuation never resumed — no regression proof for the concurrency fix that closed the round-3 blocker | `StubProtocol` gained a request gate. Two new tests hold a cycle suspended, assert the waiter has NOT returned, then release and assert it does — one for a succeeding queued cycle, one for a failing one |
 
-**Sabotage-verified.** A test that passes proves nothing about a path it never takes, so
-the resume line was deliberately removed and the suite re-run: it hung until the 120s
-timeout instead of passing. Restored, it passes in ~2s. That is the evidence the tests
-actually exercise the continuation.
+**Sabotage-verified, and the sabotage itself needed a second pass.** A test that passes
+proves nothing about a path it never takes:
+
+- Removing `waiter.resume()` entirely makes the suite hang until timeout instead of
+  passing, so both gate tests genuinely depend on the continuation.
+- Removing the signal from only the `ProxyError` exit does NOT fail the suite. A signal
+  trace (`RELEASE site=…`) showed why: the failing cycle releases at that site, but when
+  it is muted another exit path still reaches an idle state and releases the waiter. The
+  waiter is therefore protected by several exits rather than by exactly one, which is
+  the safer arrangement but means single-site sabotage is not a valid probe here.
+
+Recording both results because the second one is the kind of thing that quietly
+invalidates a "verified" claim.
 
 ### Round 3
 

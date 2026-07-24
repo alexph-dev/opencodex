@@ -19,13 +19,28 @@ final class StubProtocol: URLProtocol, @unchecked Sendable {
         queue = responses
         recorded = []
         bodies = []
-        gate = nil
+        gateStorage = nil
     }
 
     nonisolated(unsafe) static var bodies: [Data] = []
     /// When set, `startLoading` blocks until the gate is opened. Lets a test hold a
     /// refresh suspended so the coalescing/continuation path is genuinely exercised.
-    nonisolated(unsafe) static var gate: DispatchSemaphore?
+    ///
+    /// Access goes through `setGate`/`currentGate` under the same lock as the rest of
+    /// the stub state: an unsynchronised read here is a data race, and `gateEntered`
+    /// lets a test wait for the request to actually reach the gate instead of inferring
+    /// it from elapsed time.
+    nonisolated(unsafe) private static var gateStorage: DispatchSemaphore?
+    nonisolated(unsafe) static let gateEntered = DispatchSemaphore(value: 0)
+
+    static func setGate(_ gate: DispatchSemaphore?) {
+        lock.lock(); gateStorage = gate; lock.unlock()
+    }
+
+    static func currentGate() -> DispatchSemaphore? {
+        lock.lock(); defer { lock.unlock() }
+        return gateStorage
+    }
 
     static func record(_ request: URLRequest) {
         lock.lock(); defer { lock.unlock() }
@@ -59,7 +74,10 @@ final class StubProtocol: URLProtocol, @unchecked Sendable {
     override func startLoading() {
         Self.record(request)
         // Held open by tests that need a request to stay in flight.
-        Self.gate?.wait()
+        if let gate = Self.currentGate() {
+            Self.gateEntered.signal()
+            gate.wait()
+        }
         guard let response = Self.next() else {
             client?.urlProtocol(self, didFailWithError: URLError(.cannotConnectToHost))
             return
