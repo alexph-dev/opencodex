@@ -125,7 +125,12 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
     private func installEscapeMonitor() {
         removeEscapeMonitor()
         escapeMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            guard event.keyCode == 53, self?.panel.isShown == true else { return event }
+            // While a confirmation is up, Escape belongs to the alert: consuming it
+            // here dismissed the panel and stranded the alert with no way to cancel.
+            guard event.keyCode == 53,
+                  self?.panel.isShown == true,
+                  self?.panel.isPresentingModal == false
+            else { return event }
             self?.panel.dismiss()
             return nil
         }

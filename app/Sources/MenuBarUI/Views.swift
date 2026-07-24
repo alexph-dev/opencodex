@@ -218,7 +218,7 @@ final class SparklineView: NSView {
             // The most recent day is the one being asked about, so it carries full
             // weight while history recedes.
             let isLatest = index == values.count - 1
-            (isLatest ? Theme.muted : Theme.faint).setFill()
+            (isLatest ? Theme.muted : Theme.graphMark).setFill()
             NSBezierPath(roundedRect: rect, xRadius: 1.5, yRadius: 1.5).fill()
         }
     }

@@ -372,6 +372,21 @@ Also folded: `dismiss()` is now idempotent against a late monitor callback,
 `debugTogglePanel()` is `#if DEBUG` only, and `applicationWillTerminate` dismisses the
 panel for lifecycle symmetry.
 
+### Round 5 (2 findings)
+
+| Finding | Correction |
+| --- | --- |
+| Escape during the Stop confirmation dismissed the panel and left the alert stranded with no way to cancel | The Escape monitor now returns the event unchanged while `isPresentingModal`, so `NSAlert` handles it as Cancel |
+| `tertiaryLabelColor` measured **2.01:1** in light and **2.39:1** in dark against the popover material, far under the 4.5:1 needed for text | Calibrated `faint` and a separate `graphMark` token. Re-measured on the rendered panel: **7.27:1** light, **4.98:1** dark |
+
+The contrast finding is worth naming precisely: AppKit's tertiary tier is intended for
+disabled affordances, and it was being used for the range heading, metric captions, and
+quota window labels — all information the user actually has to read. "It is a system
+semantic colour" is not the same as "it is legible on this material."
+
+Contrast is now measured from the rendered PNG rather than assumed from tokens, and the
+probe can force an appearance (`PROBE_APPEARANCE=dark`) without touching system settings.
+
 ## Accept criteria
 
 1. Menu bar icon renders as a template image and changes with state.

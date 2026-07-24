@@ -1,13 +1,18 @@
 // Visual-QA harness (not shipped).
 //
-// Renders the popover in a plain window and screenshots it through the window server, so
-// every UI state can be inspected without depending on free menu bar space. Set
-// PROBE_STATE to live | stopped | unauthorized | loading | degraded | empty and
-// PROBE_TAG to name the output file.
+// Presents the real PopoverPanel over a deliberately loud backdrop and captures it with
+// CGWindowListCreateImage, so every UI state can be inspected without depending on free
+// menu bar space.
 //
-// Capturing via `screencapture -l <windowID>` rather than cacheDisplay(in:to:) is
-// deliberate: the bitmap-rep path skips text rendering and produced a screenshot with no
-// labels at all.
+// Two harness decisions are load-bearing, both learned the hard way:
+//   * Present through the REAL panel. An earlier version used a plain NSWindow, which
+//     supplied its own background and hid the fact that the panel had none at all.
+//   * Capture through the window server. cacheDisplay(in:to:) skips text rendering and
+//     produced screenshots with no labels.
+//
+// PROBE_STATE: live | stopped | unauthorized | loading | degraded | empty | overflow
+// PROBE_TAG: output filename suffix
+// PROBE_APPEARANCE: light | dark (forces appearance without touching system settings)
 
 import AppKit
 import MenuBarCore
@@ -20,6 +25,10 @@ final class ProbeDelegate: NSObject, NSApplicationDelegate {
     var window: NSWindow?
 
     func applicationDidFinishLaunching(_ n: Notification) {
+        // Force an appearance for contrast measurement without touching system settings.
+        if let name = ProcessInfo.processInfo.environment["PROBE_APPEARANCE"] {
+            NSApp.appearance = NSAppearance(named: name == "dark" ? .darkAqua : .aqua)
+        }
         let endpoint = ProxyDiscovery.resolve()
         let client = ProxyClient(endpoint: endpoint)
         let coordinator = PollingCoordinator(client: client, endpoint: endpoint)
@@ -97,7 +106,6 @@ final class ProbeDelegate: NSObject, NSApplicationDelegate {
                 let h = self.controller.preferredContentSize.height
                 if h > 0, let w = self.window {
                     w.setContentSize(NSSize(width: 340, height: h))
-                    w.setFrameOrigin(NSPoint(x: w.frame.origin.x, y: w.frame.origin.y))
                 }
             }
             try? await Task.sleep(nanoseconds: 1_200_000_000)

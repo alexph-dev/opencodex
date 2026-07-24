@@ -12,9 +12,18 @@ enum Theme {
     static let raised = NSColor.controlBackgroundColor
 
     // Text: --text / --muted / --faint
+    //
+    // `tertiaryLabelColor` measured 2.01:1 in light and 2.39:1 in dark against the
+    // popover material — well under the 4.5:1 required for normal text. AppKit's
+    // tertiary tier is intended for disabled affordances, not for information the user
+    // has to read, and every label using this tier here (range heading, metric captions,
+    // quota window labels) carries real meaning. Calibrated tokens replace it.
     static let text = NSColor.labelColor
     static let muted = NSColor.secondaryLabelColor
-    static let faint = NSColor.tertiaryLabelColor
+    /// Small supporting text that must still be legible: 10-11pt captions and labels.
+    static let faint = dynamic(light: 0x55534F, dark: 0xB8B6B3)
+    /// Graphical marks only, held to the 3:1 non-text threshold.
+    static let graphMark = dynamic(light: 0x8A8782, dark: 0x94918C)
 
     // State colours, taken verbatim from styles.css.
     static let green = dynamic(light: 0x0A7D5C, dark: 0x4ECB9D)
