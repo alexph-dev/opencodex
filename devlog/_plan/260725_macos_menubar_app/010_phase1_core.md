@@ -435,6 +435,17 @@ verified against the live proxy or Apple documentation before being folded:
 Live re-verification after the fixes covered all six providers, including Kimi's 5h+week
 pair and Cursor's three windows.
 
+### Round 2 (two blockers, both reentrancy/semantics rather than syntax)
+
+| Finding | Correction |
+| --- | --- |
+| Concurrent initial 401s: the actor suspends across each request, so two calls could both get 401; the first loaded a key and retried while the second saw the global `didAttemptCredentialLoad` flag and failed with `.unauthorized` despite a usable key now existing | Retry eligibility is decided **per request**, against the key that request actually sent. A caller that started before the load still retries with the newly available key; a caller that already used the current key does not loop |
+| `normalized()` preferred the longest horizon, so a provider at 99% of a five-hour limit and 10% monthly rendered as a green 10% row while the user was actually blocked | The compact row now selects the **highest reported usage**, with ties breaking toward the longer horizon. Live proof: Cursor's compact row moved from `month=10%` to `API usage=42%` |
+
+Regression tests added for both: a gated concurrent-401 case asserting two successes,
+one credential load, and four total requests; and pressure-selection cases covering
+higher-short-window, tie-break, and unmeasured-window inputs. 51 -> 55 cases.
+
 ## Accept criteria
 
 1. `swift run --package-path app MenuBarCoreTests` green, with the `002` payloads as

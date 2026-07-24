@@ -215,21 +215,37 @@ public extension QuotaReport {
         return windows
     }
 
-    /// The single window that best represents overall pressure, for the compact row.
+    /// The single window that best represents current pressure, for the compact row.
     ///
-    /// Precedence is longest-horizon-first (month, then week, then shorter windows):
-    /// a monthly cap is the one that actually stops work, while a 5h window recovers on
-    /// its own. Providers with no numeric window normalize to a nil percent so the UI
-    /// renders an em dash rather than a misleading zero.
+    /// Selection is **highest reported usage**, not longest horizon. Every window can
+    /// stop work: a provider at 99% of a five-hour limit and 10% of its monthly limit is
+    /// blocked right now, and showing the monthly 10% would paint that row green while
+    /// the user cannot make a request. Ties break toward the longer horizon, since that
+    /// is the one that will not recover on its own.
+    ///
+    /// Providers with no numeric window normalize to a nil percent so the UI renders an
+    /// em dash rather than a misleading zero.
     func normalized() -> NormalizedQuota {
         let name = label ?? provider
         let windows = normalizedWindows()
 
-        let preferred =
-            windows.first { $0.windowLabel == "month" && $0.hasPercent }
-            ?? windows.first { $0.windowLabel == "week" && $0.hasPercent }
-            ?? windows.first { $0.hasPercent }
-            ?? windows.first
+        // Longer horizons rank higher only as a tie-breaker.
+        func horizonRank(_ label: String) -> Int {
+            switch label {
+            case "month": return 3
+            case "week": return 2
+            case "5h": return 1
+            default: return 0
+            }
+        }
+
+        let measured = windows.filter(\.hasPercent)
+        let preferred = measured.max { lhs, rhs in
+            let left = lhs.percent ?? 0
+            let right = rhs.percent ?? 0
+            if left != right { return left < right }
+            return horizonRank(lhs.windowLabel) < horizonRank(rhs.windowLabel)
+        } ?? windows.first
 
         return preferred ?? NormalizedQuota(
             provider: provider, providerLabel: name, percent: nil,

@@ -269,5 +269,31 @@ enum TransportSuite {
             t.isNil(ProxyEndpoint(port: 70_000), "port 70000")
             t.equal(ProxyEndpoint(port: 10_100)?.baseURL.absoluteString, "http://127.0.0.1:10100")
         }
+
+        // The actor suspends across each request, so several calls can be in flight and
+        // all receive 401. A single global "already tried" flag made the second caller
+        // fail even though the first had just loaded a usable key.
+        t.test("auth: concurrent initial 401s both succeed once a key is loaded") {
+            StubProtocol.reset([
+                .init(status: 401, body: "", urlError: nil),
+                .init(status: 401, body: "", urlError: nil),
+                .init(status: 200, body: #"{"status":"protected"}"#, urlError: nil),
+                .init(status: 200, body: #"{"status":"protected"}"#, urlError: nil),
+            ])
+            let counter = StubCredentials.Counter()
+            let client = ProxyClient(endpoint: endpoint, session: makeSession(),
+                                     credentials: StubCredentials(key: "test-key", counter: counter))
+
+            let outcomes: [String] = sync {
+                async let first = try? await client.health().status
+                async let second = try? await client.health().status
+                let results = await [first, second]
+                return results.map { $0 ?? "error" }
+            }
+
+            t.equal(outcomes.filter { $0 == "protected" }.count, 2, "both calls should succeed")
+            t.equal(counter.loads, 1, "credentials loaded exactly once")
+            t.equal(StubProtocol.recorded.count, 4, "two initial calls plus two retries")
+        }
     }
 }

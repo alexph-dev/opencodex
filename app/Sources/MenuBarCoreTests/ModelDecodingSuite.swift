@@ -198,6 +198,38 @@ enum ModelDecodingSuite {
             t.equal(report.normalized().percent, 30)
         }
 
+        // Every window can stop work. A provider at 99% of a five-hour limit is blocked
+        // right now even if its monthly usage is 10%; picking the longer horizon would
+        // paint that row green while the user cannot make a request.
+        t.test("quotas: the compact row shows the window under the most pressure") {
+            let json = """
+            {"provider":"kimi","label":"Kimi","quota":{"fiveHourPercent":99,
+             "fiveHourResetAt":1784928599718,"monthlyPercent":10,"monthlyResetAt":1785542400000}}
+            """
+            let report = try decode(QuotaReport.self, json)
+            t.equal(report.normalized().windowLabel, "5h")
+            t.equal(report.normalized().percent, 99)
+            t.equal(report.normalizedWindows().count, 2)
+        }
+
+        t.test("quotas: equal pressure breaks toward the longer horizon") {
+            let json = """
+            {"provider":"p","quota":{"fiveHourPercent":50,"fiveHourResetAt":1784928599718,
+             "weeklyPercent":50,"weeklyResetAt":1785265199718}}
+            """
+            t.equal(try decode(QuotaReport.self, json).normalized().windowLabel, "week")
+        }
+
+        t.test("quotas: a window reporting only a reset time does not outrank a measured one") {
+            let json = """
+            {"provider":"p","quota":{"weeklyPercent":12,"weeklyResetAt":1785265199718,
+             "customWindows":[{"label":"unmeasured","resetAt":1785265199718}]}}
+            """
+            let report = try decode(QuotaReport.self, json)
+            t.equal(report.normalized().windowLabel, "week")
+            t.equal(report.normalized().percent, 12)
+        }
+
         t.test("quotas: an absent quota normalizes to a nil percent") {
             let normalized = try decode(QuotaReport.self, #"{"provider":"p","label":"P"}"#).normalized()
             t.isNil(normalized.percent, "percent")

@@ -144,27 +144,47 @@ public actor ProxyClient {
         query: [URLQueryItem] = [],
         body: Body?
     ) async throws -> Data {
+        let keyAtStart = apiKey
         do {
             return try await perform(method: method, path: path, query: query, body: body)
         } catch ProxyError.unauthorized {
             // A loopback proxy needs no credential, so a 401 means this install is bound
-            // to a non-loopback host. Load the stored key once and retry exactly once —
-            // never a loop, so a stale key cannot spin.
-            guard !didAttemptCredentialLoad else { throw ProxyError.unauthorized }
-            didAttemptCredentialLoad = true
-            guard let stored = credentials.loadAPIKey(), !stored.isEmpty else {
+            // to a non-loopback host.
+            //
+            // Reentrancy matters here: the actor suspends across the request, so several
+            // calls can be in flight and all receive 401. Retry eligibility is therefore
+            // decided per request, against the key THAT request actually sent — not
+            // against a single global "already tried" flag. A concurrent caller that
+            // started before the key was loaded must still get to retry with it.
+            guard let key = try await credentialForRetry(after: keyAtStart) else {
                 throw ProxyError.unauthorized
             }
-            apiKey = stored
-            return try await perform(method: method, path: path, query: query, body: body)
+            return try await perform(method: method, path: path, query: query, body: body, key: key)
         }
+    }
+
+    /// The key to retry with, or `nil` when this request already used the current
+    /// credential (so retrying would repeat an identical, failing call).
+    private func credentialForRetry(after keyAtStart: String?) async throws -> String? {
+        // Another in-flight call already loaded a key this request did not use.
+        if let current = apiKey, current != keyAtStart { return current }
+        // This request already carried the newest key: a stale credential, not a
+        // missing one. Never loop.
+        if apiKey != nil, apiKey == keyAtStart { return nil }
+
+        guard !didAttemptCredentialLoad else { return nil }
+        didAttemptCredentialLoad = true
+        guard let stored = credentials.loadAPIKey(), !stored.isEmpty else { return nil }
+        apiKey = stored
+        return stored
     }
 
     private func perform<Body: Encodable>(
         method: String,
         path: String,
         query: [URLQueryItem],
-        body: Body?
+        body: Body?,
+        key: String? = nil
     ) async throws -> Data {
         guard var components = URLComponents(
             url: endpoint.baseURL.appendingPathComponent(path),
@@ -176,7 +196,9 @@ public actor ProxyClient {
         var request = URLRequest(url: url)
         request.httpMethod = method
         request.timeoutInterval = method == "GET" ? 4 : 6
-        if let apiKey { request.setValue(apiKey, forHTTPHeaderField: "x-opencodex-api-key") }
+        if let credential = key ?? apiKey {
+            request.setValue(credential, forHTTPHeaderField: "x-opencodex-api-key")
+        }
         if let body {
             request.setValue("application/json", forHTTPHeaderField: "content-type")
             request.httpBody = try? JSONEncoder().encode(body)
