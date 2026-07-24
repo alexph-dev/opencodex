@@ -23,6 +23,17 @@ enum PollingSuite {
 
     private final class Box<T>: @unchecked Sendable { var value: T? }
 
+    /// Polls the coordinator's own waiter count, so registration is observed rather
+    /// than assumed from elapsed time.
+    private static func waitForWaiter(_ coordinator: PollingCoordinator, timeout: TimeInterval = 5) async -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if await coordinator.waiterCount > 0 { return true }
+            try? await Task.sleep(nanoseconds: 5_000_000)
+        }
+        return false
+    }
+
     private final class Flag: @unchecked Sendable {
         private let lock = NSLock()
         private var flag = false
@@ -307,13 +318,17 @@ enum PollingSuite {
                 await coordinator.refreshAndWait()
                 returned.set()
             }
-            Thread.sleep(forTimeInterval: 0.3)
+            // Wait for the waiter to actually REGISTER, rather than sleeping and hoping
+            // it was scheduled. A fixed sleep let this test pass without ever entering
+            // the continuation path.
+            t.equal(sync { await waitForWaiter(coordinator) }, true, "waiter should register")
             t.equal(returned.value, false, "refreshAndWait must not return while a cycle is in flight")
 
             StubProtocol.setGate(nil)
             for _ in 0..<40 { gate.signal() }
             sync { _ = await first.value; _ = await waiter.value }
             t.equal(returned.value, true, "refreshAndWait must resume once the queued cycle publishes")
+            t.equal(sync { await coordinator.waiterCount }, 0, "no waiter should remain registered")
         }
 
         // The queued cycle must FAIL here. Two contract details drive the setup:
@@ -354,7 +369,7 @@ enum PollingSuite {
                 await coordinator.refreshAndWait()
                 returned.set()
             }
-            Thread.sleep(forTimeInterval: 0.3)
+            t.equal(sync { await waitForWaiter(coordinator) }, true, "waiter should register")
             t.equal(returned.value, false, "must still be suspended")
 
             StubProtocol.setGate(nil)

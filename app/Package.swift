@@ -7,6 +7,7 @@ let package = Package(
     products: [
         .executable(name: "OpenCodexMenuBar", targets: ["MenuBarApp"]),
         .executable(name: "MenuBarCoreTests", targets: ["MenuBarCoreTests"]),
+        .executable(name: "MenuBarUITests", targets: ["MenuBarUITests"]),
         .executable(name: "UIProbe", targets: ["UIProbe"]),
         .executable(name: "IconProbe", targets: ["IconProbe"]),
     ],
@@ -27,6 +28,13 @@ let package = Package(
             name: "MenuBarCoreTests",
             dependencies: ["MenuBarCore"],
             path: "Sources/MenuBarCoreTests"
+        ),
+        // UI-layer tests need AppKit and an NSApplication, so they are a separate
+        // executable from the dependency-free core suite.
+        .executableTarget(
+            name: "MenuBarUITests",
+            dependencies: ["MenuBarCore", "MenuBarUI"],
+            path: "Sources/MenuBarUITests"
         ),
         .executableTarget(name: "UIProbe", dependencies: ["MenuBarCore", "MenuBarUI"], path: "Sources/UIProbe"),
         .executableTarget(name: "IconProbe", dependencies: ["MenuBarCore", "MenuBarUI"], path: "Sources/IconProbe"),

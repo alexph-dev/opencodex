@@ -5,7 +5,7 @@ import MenuBarCore
 ///
 /// Collapsed by default: reading status is frequent, toggling a provider is rare, and
 /// the urgency order in `003` puts actions below information.
-final class ProviderListView: NSView {
+public final class ProviderListView: NSView {
     private let disclosure = NSButton()
     private let summary = makeLabel("", font: Theme.caption, color: Theme.muted)
     private let rows = NSStackView()
@@ -17,10 +17,10 @@ final class ProviderListView: NSView {
     private var pending: [String: Bool] = [:]
 
     /// `(provider, shouldDisable)`.
-    var onToggle: ((String, Bool) -> Void)?
+    public var onToggle: ((String, Bool) -> Void)?
 
-    init() {
-        super.init(frame: .zero)
+    public override init(frame: NSRect) {
+        super.init(frame: frame)
 
         disclosure.bezelStyle = .disclosure
         disclosure.setButtonType(.onOff)
@@ -53,9 +53,11 @@ final class ProviderListView: NSView {
         ])
     }
 
-    required init?(coder: NSCoder) { nil }
+    public convenience init() { self.init(frame: .zero) }
 
-    func apply(_ snapshot: ProxySnapshot) {
+    public required init?(coder: NSCoder) { nil }
+
+    public func apply(_ snapshot: ProxySnapshot) {
         self.snapshot = snapshot
 
         guard snapshot.providersLoaded else {
@@ -104,6 +106,17 @@ final class ProviderListView: NSView {
         }
     }
 
+    /// Shared by the disclosure button and the test hook.
+    func setExpanded(_ value: Bool) {
+        expanded = value
+        disclosure.state = value ? .on : .off
+        rows.isHidden = !expanded
+        disclosure.setAccessibilityLabel(expanded ? "Hide providers" : "Show providers")
+        (window?.contentViewController as? PopoverViewController)?.refreshSize()
+    }
+
+    var providerRows: [NSView] { rows.arrangedSubviews }
+
     @objc private func toggleExpanded() {
         expanded = disclosure.state == .on
         rows.isHidden = !expanded
@@ -113,7 +126,7 @@ final class ProviderListView: NSView {
     }
 
     /// Reverts a switch after the proxy rejected the change.
-    func revert(_ name: String, to enabled: Bool) {
+    public func revert(_ name: String, to enabled: Bool) {
         pending[name] = nil
         for case let row as ProviderRowView in rows.arrangedSubviews where row.providerName == name {
             row.setEnabled(enabled)
@@ -126,7 +139,7 @@ final class ProviderListView: NSView {
     /// a second click cannot race the first.
     /// `intended` is the state the user selected, retained so a poll landing mid-write
     /// cannot snap the switch back.
-    func setBusy(_ name: String, _ busy: Bool, intended: Bool? = nil) {
+    public func setBusy(_ name: String, _ busy: Bool, intended: Bool? = nil) {
         if busy {
             pending[name] = intended ?? pending[name] ?? true
         } else {
@@ -139,8 +152,8 @@ final class ProviderListView: NSView {
     }
 }
 
-final class ProviderRowView: NSView {
-    let providerName: String
+public final class ProviderRowView: NSView {
+    public let providerName: String
     private let toggle = NSSwitch()
     private let onToggle: (Bool) -> Void
     private var baseEnabled = true
@@ -198,6 +211,9 @@ final class ProviderRowView: NSView {
 
     func setEnabled(_ enabled: Bool) { toggle.state = enabled ? .on : .off }
 
+    var toggleState: Bool { toggle.state == .on }
+    var toggleIsEnabled: Bool { toggle.isEnabled }
+
     /// Inert while its write is in flight, so a second click cannot race the first.
     func setBusy(_ busy: Bool) {
         isBusy = busy
@@ -209,4 +225,30 @@ final class ProviderRowView: NSView {
         // Optimistic: the switch has already moved. The caller reverts on failure.
         onToggle(toggle.state == .off)
     }
+}
+
+
+// MARK: - Test inspection
+
+/// Read-only hooks so the UI suite can assert on rendered control state rather than on
+/// the view's private bookkeeping.
+public extension ProviderListView {
+    /// Expands the list without going through a click, so tests do not depend on
+    /// NSButton action dispatch.
+    func expandForTesting() { setExpanded(true) }
+
+    func isToggleOn(_ name: String) -> Bool? { row(name)?.isOn }
+    func isToggleEnabled(_ name: String) -> Bool? { row(name)?.isToggleEnabled }
+
+    private func row(_ name: String) -> ProviderRowView? {
+        for case let row as ProviderRowView in providerRows where row.providerName == name {
+            return row
+        }
+        return nil
+    }
+}
+
+public extension ProviderRowView {
+    var isOn: Bool { toggleState }
+    var isToggleEnabled: Bool { toggleIsEnabled }
 }

@@ -31,7 +31,7 @@ final class StubProtocol: URLProtocol, @unchecked Sendable {
     /// lets a test wait for the request to actually reach the gate instead of inferring
     /// it from elapsed time.
     nonisolated(unsafe) private static var gateStorage: DispatchSemaphore?
-    nonisolated(unsafe) static let gateEntered = DispatchSemaphore(value: 0)
+    static let gateEntered = DispatchSemaphore(value: 0)
 
     static func setGate(_ gate: DispatchSemaphore?) {
         lock.lock(); gateStorage = gate; lock.unlock()

@@ -201,6 +201,19 @@ Stubbed `URLProtocol`:
 
 ## Code-review corrections (folded before B closed)
 
+### Round 6
+
+| Finding | Correction |
+| --- | --- |
+| The continuation tests could still pass without entering the continuation: `gateEntered` proved cycle 1 reached the gate, but nothing proved the *waiter* had registered before the gate was released. Under starvation the waiter could start afterwards, take the ordinary path, and satisfy every assertion | `PollingCoordinator.waiterCount` is exposed and the tests poll it until registration is observed, then assert it returns to zero. No `Thread.sleep` remains as synchronisation |
+| No test drove `MenuBarUI` at all, so the Phase 3 rollback, pending-versus-poll, and default-direction behaviours — every one of them a defect found in an earlier round — had zero regression cover | New `MenuBarUITests` target (7 cases) with read-only inspection hooks on `ProviderListView` |
+
+**Sabotage-verified.** Both previously-fixed defects were reintroduced and the suite
+caught exactly the right two cases: making the default guard direction-insensitive failed
+"a disabled default provider can still be switched back on", and dropping the intended
+value in `rebuildRows` failed "a stale poll cannot undo an in-flight optimistic change".
+The other five stayed green.
+
 ### Round 5
 
 | Finding | Correction |
@@ -299,4 +312,5 @@ and a proxy that accepts the stop but keeps answering.
 3. The default provider's toggle is inert and explains why, using `/api/config`.
 4. Failure paths surface a human sentence, never a raw body.
 5. No `Process` / `NSTask` usage anywhere in `app/`.
-6. `swift run --package-path app MenuBarCoreTests` green.
+6. `swift run --package-path app MenuBarCoreTests` and
+   `swift run --package-path app MenuBarUITests` both green.
