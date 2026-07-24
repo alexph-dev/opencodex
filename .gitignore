@@ -71,3 +71,4 @@ go/
 # Rust native helpers keep their reproducible sources and lockfile in git, never local artifacts.
 native/**/target/
 dist/macos/
+dist/release/

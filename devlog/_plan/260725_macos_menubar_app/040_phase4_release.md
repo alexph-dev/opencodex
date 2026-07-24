@@ -16,6 +16,12 @@ strongest part of either PR and is not re-derived.
 `AGENTS.md` classifies as requiring explicit security review. Changes are therefore
 minimal, additive, SHA-pinned, and least-privilege. No secret is introduced.
 
+## Stale check at P
+
+Re-verified against the tree: neither script existed, `package.json` had no macOS
+entries, and `gui/public/favicon.png` (the icon source) is present. The CI path filter
+also lacked `app/**`, so an app-only change would have run no CI at all — added.
+
 ## File change map
 
 | Path | Action |
@@ -275,6 +281,41 @@ Constraints honoured:
   explicitly rather than assumed. Pre-existing paths in unrelated historical devlogs are
   out of scope (`000` criterion 8). This mirrors the artifact defect the Codex reviewer
   originally raised on PR #421, which that contributor has since fixed (`001` §2.1).
+
+## Implementation notes
+
+**A pipeline subtlety cost a real debugging pass.** The archive assertion was originally
+`unzip -Z1 "$archive" | grep -Fqx '…'`. Under `set -o pipefail`, `grep -q` exits as soon
+as it matches, `unzip` then dies on SIGPIPE, and the pipeline reports failure *even
+though the match succeeded* — so a correctly packaged archive was rejected with
+"does not contain the OpenCodex executable". Capturing the listing into a variable first
+and matching against a here-string fixes it. The assertion is worth keeping; it just has
+to be written so it cannot fail on success.
+
+**`--sequesterRsrc` adds `__MACOSX/` entries** alongside the real paths, which is
+harmless for an exact-match assertion but surprising when reading the listing by eye.
+
+### Verified locally
+
+```text
+bash scripts/build-macos-app.sh
+  -> dist/macos/OpenCodex.app (version 2.7.35), arm64
+  -> Info.plist: CFBundleExecutable=OpenCodexMenuBar, CFBundlePackageType=APPL,
+     CFBundleIconFile=OpenCodex, LSUIElement=true, NSAllowsLocalNetworking=true
+  -> codesign --verify --deep --strict: valid on disk, satisfies its Designated Requirement
+  -> launched from the bundle: menu bar item appeared, no ATS errors in the log
+
+UNIVERSAL=0 bash scripts/package-macos-release.sh
+  -> OpenCodex-2.7.35-macos-arm64.zip (813 KB) + .sha256
+  -> shasum -a 256 -c: OK
+  -> unpacked with ditto -x -k: signature survived, app launched from the unpacked bundle
+
+UNIVERSAL=1 bash scripts/build-macos-app.sh
+  -> refused with the Command Line Tools explanation rather than a linker error
+```
+
+The unpack-and-launch step is the one that matters: it is the path a user actually takes,
+and it is the one that would expose a `zip`-corrupted signature.
 
 ## Accept criteria
 
