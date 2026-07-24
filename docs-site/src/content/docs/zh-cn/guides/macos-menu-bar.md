@@ -34,6 +34,9 @@ shasum -a 256 -c OpenCodex-<version>-macos-universal.zip.sha256
 2. 选择**打开**。
 3. 在弹出的对话框中再次点击**打开**。
 
+如果对话框没有「打开」按钮，请前往**系统设置 → 隐私与安全性**，找到被拦截的提示并点击
+**仍要打开**。
+
 macOS 会记住这个选择，因此每个版本只需操作一次。
 
 也可以在终端移除隔离属性：
@@ -57,7 +60,7 @@ xattr -d com.apple.quarantine /Applications/OpenCodex.app
 
 点击图标会打开包含四个部分的面板。
 
-**状态** — 代理是否运行、监听地址以及保护状态。当代理给出修复命令（例如
+**状态** — 代理是否运行、应用正在使用的回环地址以及保护状态。当代理给出修复命令（例如
 `ocx service install`）时，会以可选中的文本显示。应用不会替你执行。
 
 **用量** — 最近 7 天的请求数、令牌数和预估成本，以及每日趋势。请求数后的 `~` 表示其中一部分
@@ -85,8 +88,11 @@ xattr -d com.apple.quarantine /Applications/OpenCodex.app
 `$OPENCODEX_HOME/runtime-port.json`），找不到则使用端口 `10100`。该文件只提供端口，主机始终
 为回环地址。
 
-如果代理绑定在非回环地址上，就需要 API 密钥。面板会说明这一点并提供前往仪表板的按钮。密钥
-保存在 macOS 钥匙串中，不会写入日志或偏好设置文件。
+如果代理绑定在非回环地址上，就需要 API 密钥。面板会说明这一点并提供前往仪表板的按钮。
+
+**该路径尚未完全支持。** 应用会读取 macOS 钥匙串中的 `com.opencodex.menubar` 条目并重试一次，
+但没有输入密钥的界面。除非你自己创建该钥匙串条目，否则面板会一直停在「Needs API key」。默认的
+回环代理不需要密钥。原生密钥输入已在计划中。
 
 ## 轮询
 
@@ -95,7 +101,7 @@ xattr -d com.apple.quarantine /Applications/OpenCodex.app
 
 ## 从源码构建
 
-需要 macOS 13 或更高版本以及 Xcode Command Line Tools：
+需要 macOS 13 或更高版本、Xcode Command Line Tools 以及 [Bun](https://bun.sh)：
 
 ```bash
 git clone https://github.com/lidge-jun/opencodex.git
@@ -103,7 +109,8 @@ cd opencodex
 bun run build:macos
 ```
 
-程序包会生成在 `dist/macos/OpenCodex.app`。
+程序包会生成在 `dist/macos/OpenCodex.app`。若没有 Bun，可以直接运行脚本：
+`bash scripts/build-macos-app.sh`。
 
 构建通用二进制（`UNIVERSAL=1`）需要完整的 Xcode。Command Line Tools 只包含当前架构的 Swift
 兼容库，此时构建会给出说明信息，而不是抛出链接器错误。
@@ -117,5 +124,5 @@ MACOS_SIGN_IDENTITY="Developer ID Application: Your Name (TEAMID)" bun run build
 
 ## 卸载
 
-把 `OpenCodex.app` 拖到废纸篓即可。应用只留下一个钥匙串条目，可在「钥匙串访问」中搜索
-`com.opencodex.menubar` 删除。
+把 `OpenCodex.app` 拖到废纸篓即可。应用不会留下偏好设置或其他状态文件。如果你为非回环代理
+手动创建过钥匙串条目，可在「钥匙串访问」中搜索 `com.opencodex.menubar` 删除。

@@ -39,6 +39,9 @@ To open it anyway:
 2. Choose **Open**.
 3. Click **Open** in the dialog that appears.
 
+If that dialog does not offer an Open button, go to **System Settings → Privacy &
+Security**, find the blocked-app notice, and click **Open Anyway**.
+
 macOS remembers the decision, so this is a one-time step per version.
 
 Alternatively, remove the quarantine attribute from the terminal:
@@ -64,8 +67,8 @@ are monochrome by convention:
 
 Clicking it opens a panel with four sections:
 
-**Status** — whether the proxy is running, the address it is listening on, and the
-protection state. When the proxy recommends a remediation command (for example
+**Status** — whether the proxy is running, the loopback endpoint the app is using, and
+the protection state. When the proxy recommends a remediation command (for example
 `ocx service install`), it appears here as selectable text. The app never runs it for
 you.
 
@@ -99,8 +102,12 @@ The app finds the proxy automatically. It reads `~/.opencodex/runtime-port.json`
 taken from that file; the host is always loopback.
 
 If your proxy is bound to a non-loopback address it will require an API key. The panel
-says so and offers a link to the dashboard, where you can configure one. The key is
-stored in your macOS Keychain and never written to logs or preferences.
+says so and offers a link to the dashboard.
+
+**This case is not fully supported yet.** The app can read a key from the macOS Keychain
+under `com.opencodex.menubar` and will retry once with it, but it has no UI for entering
+one — so unless you add that Keychain item yourself, the panel stays on "Needs API key".
+A loopback proxy, which is the default, needs no key at all. Native key entry is planned.
 
 ## Polling
 
@@ -111,7 +118,7 @@ rather than hammering a proxy you stopped on purpose.
 
 ## Build from source
 
-Requires macOS 13 or later and the Xcode Command Line Tools:
+Requires macOS 13 or later, the Xcode Command Line Tools, and [Bun](https://bun.sh):
 
 ```bash
 git clone https://github.com/lidge-jun/opencodex.git
@@ -119,7 +126,8 @@ cd opencodex
 bun run build:macos
 ```
 
-The bundle appears at `dist/macos/OpenCodex.app`.
+The bundle appears at `dist/macos/OpenCodex.app`. Without Bun you can run the script
+directly: `bash scripts/build-macos-app.sh`.
 
 Building a universal binary (`UNIVERSAL=1`) needs the full Xcode toolchain — Command
 Line Tools ships only current-architecture Swift compatibility libraries, and the build
@@ -134,5 +142,6 @@ MACOS_SIGN_IDENTITY="Developer ID Application: Your Name (TEAMID)" bun run build
 
 ## Uninstall
 
-Drag `OpenCodex.app` to the Trash. The app stores nothing outside its Keychain entry,
-which you can remove in Keychain Access by searching for `com.opencodex.menubar`.
+Drag `OpenCodex.app` to the Trash. The app writes no preferences or state of its own. If
+you manually added a Keychain item for a non-loopback proxy, remove it in Keychain Access
+by searching for `com.opencodex.menubar`.

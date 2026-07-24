@@ -38,6 +38,9 @@ shasum -a 256 -c OpenCodex-<버전>-macos-universal.zip.sha256
 2. **열기**를 선택합니다.
 3. 뜨는 대화상자에서 다시 **열기**를 누릅니다.
 
+대화상자에 열기 버튼이 없다면 **시스템 설정 → 개인정보 보호 및 보안**에서 차단 알림을 찾아
+**그래도 열기**를 누르세요.
+
 한 번 허용하면 macOS가 기억하므로 버전마다 한 번씩만 하면 됩니다.
 
 터미널에서 격리 속성을 지워도 됩니다.
@@ -63,7 +66,7 @@ xattr -d com.apple.quarantine /Applications/OpenCodex.app
 
 아이콘을 누르면 네 영역이 있는 패널이 열립니다.
 
-**상태** — 프록시 실행 여부, 수신 주소, 보호 상태를 보여줍니다. 프록시가 조치 명령을
+**상태** — 프록시 실행 여부, 앱이 사용 중인 루프백 주소, 보호 상태를 보여줍니다. 프록시가 조치 명령을
 권할 때(예: `ocx service install`) 선택 가능한 텍스트로 표시합니다. 앱이 대신 실행하지는
 않습니다.
 
@@ -96,8 +99,12 @@ xattr -d com.apple.quarantine /Applications/OpenCodex.app
 가져오는 건 포트뿐이고 호스트는 항상 루프백입니다.
 
 프록시가 루프백이 아닌 주소에 바인딩돼 있으면 API 키가 필요합니다. 패널이 그 사실을 알려주고
-대시보드로 가는 버튼을 보여줍니다. 키는 macOS 키체인에 저장되며 로그나 환경설정 파일에는
-기록하지 않습니다.
+대시보드로 가는 버튼을 보여줍니다.
+
+**아직 완전히 지원되는 경로는 아닙니다.** 앱은 macOS 키체인의 `com.opencodex.menubar`
+항목을 읽어 한 번 재시도하지만, 키를 입력하는 화면이 없습니다. 직접 키체인 항목을 만들지
+않으면 패널은 "Needs API key" 상태로 남습니다. 기본값인 루프백 프록시는 키가 필요 없습니다.
+네이티브 키 입력은 예정돼 있습니다.
 
 ## 폴링 주기
 
@@ -107,7 +114,7 @@ xattr -d com.apple.quarantine /Applications/OpenCodex.app
 
 ## 소스에서 빌드하기
 
-macOS 13 이상과 Xcode Command Line Tools가 필요합니다.
+macOS 13 이상, Xcode Command Line Tools, 그리고 [Bun](https://bun.sh)이 필요합니다.
 
 ```bash
 git clone https://github.com/lidge-jun/opencodex.git
@@ -115,7 +122,8 @@ cd opencodex
 bun run build:macos
 ```
 
-번들은 `dist/macos/OpenCodex.app`에 생깁니다.
+번들은 `dist/macos/OpenCodex.app`에 생깁니다. Bun 없이 쓰려면 스크립트를 직접 실행하세요:
+`bash scripts/build-macos-app.sh`.
 
 유니버설 바이너리(`UNIVERSAL=1`)를 만들려면 전체 Xcode가 필요합니다. Command Line Tools
 에는 현재 아키텍처용 Swift 호환 라이브러리만 들어 있어서, 이 경우 링커 오류 대신 그 이유를
@@ -130,5 +138,6 @@ MACOS_SIGN_IDENTITY="Developer ID Application: Your Name (TEAMID)" bun run build
 
 ## 삭제
 
-`OpenCodex.app`을 휴지통으로 옮기면 됩니다. 앱이 남기는 건 키체인 항목 하나뿐이고,
-키체인 접근에서 `com.opencodex.menubar`로 검색해 지울 수 있습니다.
+`OpenCodex.app`을 휴지통으로 옮기면 됩니다. 앱은 환경설정이나 별도 상태 파일을 남기지
+않습니다. 루프백이 아닌 프록시를 위해 키체인 항목을 직접 만들었다면, 키체인 접근에서
+`com.opencodex.menubar`로 검색해 지우세요.

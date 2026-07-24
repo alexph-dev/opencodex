@@ -6,6 +6,11 @@ import Security
 /// The key is read lazily — only after a 401 — and is never written to UserDefaults,
 /// never logged, and never included in an error surfaced to the UI.
 ///
+/// **Read-only in practice today.** Nothing in the app calls `write`: there is no key
+/// entry UI yet, so a user with a non-loopback proxy has to create the Keychain item
+/// themselves. `write`/`delete` exist for the entry flow that is planned, and the docs
+/// say plainly that the case is not fully supported rather than implying it works.
+///
 /// Every query sets `kSecUseDataProtectionKeychain`. Without it, `kSecAttrAccessible` is
 /// ignored on macOS (it applies only to data-protection or synchronizable items), so the
 /// declared accessibility class would be decorative. Setting it on *all* operations also

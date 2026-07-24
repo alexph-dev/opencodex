@@ -39,6 +39,9 @@ Developer アカウントが必要です。OpenCodex はそのアカウントを
 2. **開く** を選択します。
 3. 表示されたダイアログで再度 **開く** をクリックします。
 
+ダイアログに「開く」が無い場合は、**システム設定 → プライバシーとセキュリティ** でブロック
+通知を探し、**このまま開く** をクリックしてください。
+
 一度許可すれば macOS が記憶するため、バージョンごとに一度だけの操作です。
 
 ターミナルから隔離属性を削除する方法もあります。
@@ -64,7 +67,7 @@ xattr -d com.apple.quarantine /Applications/OpenCodex.app
 
 アイコンをクリックすると 4 つのセクションを持つパネルが開きます。
 
-**ステータス** — プロキシの稼働状況、待ち受けアドレス、保護状態。プロキシが対処コマンド
+**ステータス** — プロキシの稼働状況、アプリが使用しているループバックアドレス、保護状態。プロキシが対処コマンド
 （例: `ocx service install`）を推奨している場合は選択可能なテキストとして表示します。アプリが
 代わりに実行することはありません。
 
@@ -97,8 +100,12 @@ xattr -d com.apple.quarantine /Applications/OpenCodex.app
 ファイルから取得するのはポートのみで、ホストは常にループバックです。
 
 プロキシがループバック以外のアドレスにバインドされている場合は API キーが必要です。パネルが
-その旨を表示し、ダッシュボードへのボタンを出します。キーは macOS キーチェーンに保存され、
-ログや設定ファイルには書き込まれません。
+その旨を表示し、ダッシュボードへのボタンを出します。
+
+**この経路はまだ完全にはサポートされていません。** アプリは macOS キーチェーンの
+`com.opencodex.menubar` を読み取って一度だけ再試行しますが、キーを入力する画面がありません。
+自分でキーチェーン項目を作成しない限り、パネルは「Needs API key」のままです。既定である
+ループバックのプロキシではキーは不要です。ネイティブのキー入力は今後追加予定です。
 
 ## ポーリング
 
@@ -108,7 +115,7 @@ xattr -d com.apple.quarantine /Applications/OpenCodex.app
 
 ## ソースからビルド
 
-macOS 13 以降と Xcode Command Line Tools が必要です。
+macOS 13 以降、Xcode Command Line Tools、および [Bun](https://bun.sh) が必要です。
 
 ```bash
 git clone https://github.com/lidge-jun/opencodex.git
@@ -116,7 +123,8 @@ cd opencodex
 bun run build:macos
 ```
 
-バンドルは `dist/macos/OpenCodex.app` に生成されます。
+バンドルは `dist/macos/OpenCodex.app` に生成されます。Bun がない場合はスクリプトを直接
+実行できます: `bash scripts/build-macos-app.sh`。
 
 ユニバーサルバイナリ（`UNIVERSAL=1`）には完全な Xcode が必要です。Command Line Tools には
 現在のアーキテクチャ用の Swift 互換ライブラリしか含まれないため、その場合はリンカーエラーでは
@@ -131,5 +139,6 @@ MACOS_SIGN_IDENTITY="Developer ID Application: Your Name (TEAMID)" bun run build
 
 ## アンインストール
 
-`OpenCodex.app` をゴミ箱に移動してください。アプリが残すのはキーチェーン項目のみで、
-キーチェーンアクセスで `com.opencodex.menubar` を検索して削除できます。
+`OpenCodex.app` をゴミ箱に移動してください。アプリは設定ファイルなどを残しません。ループ
+バック以外のプロキシ用にキーチェーン項目を手動で作成した場合は、キーチェーンアクセスで
+`com.opencodex.menubar` を検索して削除してください。
