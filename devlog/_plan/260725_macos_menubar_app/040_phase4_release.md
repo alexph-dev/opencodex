@@ -89,7 +89,7 @@ Staging, then atomic swap:
 
 ```bash
 mkdir -p "$output_root"
-output_root="$(cd "$output_root" && pwd)"
+output_root="$(cd "$output_root" && pwd -P)"
 staging_root="$(mktemp -d "$output_root/.OpenCodex-build.XXXXXX")"
 staged_app="$staging_root/OpenCodex.app"
 iconset="$staging_root/OpenCodex.iconset"
@@ -120,8 +120,20 @@ for size in 16 32 128 256 512; do
 done
 iconutil -c icns "$iconset" -o "$staged_app/Contents/Resources/OpenCodex.icns"
 
-# Ad-hoc sign so Gatekeeper has a stable identity; CI may re-sign with a real identity.
-codesign --force --sign - --timestamp=none "$staged_app"
+# MACOS_SIGN_IDENTITY is a LOCAL hook (preconfigured keychain). CI deliberately does not
+# set it: an identity name alone cannot sign on a hosted runner, because nothing imports
+# the certificate and private key. Unset, the bundle is ad-hoc signed and says so.
+if [[ -n "${MACOS_SIGN_IDENTITY:-}" ]]; then
+  codesign --force --deep --options runtime --timestamp --sign "$MACOS_SIGN_IDENTITY" "$staged_app"
+else
+  codesign --force --sign - --timestamp=none "$staged_app"
+fi
+
+# Refuse to delete a symlinked destination.
+if [[ -L "$app_bundle" ]]; then
+  echo "Refusing to replace '$app_bundle': it is a symlink." >&2
+  exit 1
+fi
 
 rm -rf "$app_bundle" && mv "$staged_app" "$app_bundle"
 ```
@@ -230,6 +242,9 @@ package-macos:
       env:
         RELEASE_VERSION: ${{ inputs.version }}
         UNIVERSAL: "1"
+        # A valid single-integer CFBundleVersion. Appending a run number to a full
+        # semver would be a FOURTH component, which Apple ignores.
+        MACOS_BUILD_NUMBER: ${{ github.run_number }}
       run: bash scripts/package-macos-release.sh
     - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
       with:
@@ -255,7 +270,10 @@ attach-macos:
     - name: Attach to release
       env:
         GH_TOKEN: ${{ github.token }}
-      run: gh release upload "v${{ inputs.version }}" dist/release/* --clobber
+        # Inputs reach shell code through env. Direct interpolation into run: source is
+        # rejected repo-wide by tests/ci-workflows.test.ts.
+        RELEASE_VERSION: ${{ inputs.version }}
+      run: gh release upload "v${RELEASE_VERSION}" dist/release/* --clobber
 ```
 
 `shasum -c` before upload means a corrupted artifact transfer cannot become a published
@@ -361,8 +379,10 @@ broken.
 1. `bun run build:macos` produces a launchable `dist/macos/OpenCodex.app`.
 2. `bun run package:macos` produces zip + `.sha256`, with the content assertion passing.
 3. `lipo -archs` shows `arm64` locally; both arches asserted in CI.
-   3a. `CFBundleVersion` is period-separated integers even for preview versions
-       (`2.7.36-preview.1` → `2.7.36`, or `2.7.36.<run>` with `MACOS_BUILD_NUMBER`).
+   3a. Both version fields honour Apple's limits: `CFBundleShortVersionString` is
+       exactly three integers (`2.7.36-preview.1` → `2.7.36`), and `CFBundleVersion` is
+       one to three integers — `MACOS_BUILD_NUMBER` replaces it outright rather than
+       appending a fourth component, which Apple ignores.
    3b. `OUTPUT_DIR` outside the repository or temp is refused, since the build deletes
        whatever sits at the destination.
 4. `UNIVERSAL=1` under Command Line Tools fails with the explanatory message, not a

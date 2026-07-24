@@ -18,11 +18,28 @@ if [[ "$(uname -s)" != "Darwin" ]]; then
   exit 1
 fi
 
-mkdir -p "$output_root"
+# Validate BEFORE creating anything, so the script cannot leave a directory behind at a
+# path it then refuses to build into.
+#
 # `cd … && pwd` keeps LOGICAL paths on macOS, so a symlink inside the repository that
 # points elsewhere would satisfy the prefix check below and then be deleted for real.
-# Resolve physically before validating.
-output_root="$(cd "$output_root" && pwd -P)"
+# Resolve physically: walk up to the nearest existing ancestor, resolve that, and
+# re-append the parts that do not exist yet.
+resolve_physical() {
+  local target="$1" tail=""
+  # Absolute-ise relative input against the caller's directory.
+  [[ "$target" = /* ]] || target="$PWD/$target"
+  while [[ ! -d "$target" && "$target" != "/" ]]; do
+    tail="$(basename "$target")${tail:+/$tail}"
+    target="$(dirname "$target")"
+  done
+  local resolved
+  resolved="$(cd "$target" && pwd -P)"
+  printf '%s' "${tail:+$resolved/$tail}${tail:+}"
+  [[ -n "$tail" ]] || printf '%s' "$resolved"
+}
+
+output_root="$(resolve_physical "$output_root")"
 app_bundle="$output_root/OpenCodex.app"
 
 # The build deletes whatever sits at $app_bundle, so the destination must be somewhere
@@ -46,6 +63,8 @@ case "$output_root" in
     fi
     ;;
 esac
+
+mkdir -p "$output_root"
 
 swift_args=(--package-path "$package_dir" -c "$configuration" --product OpenCodexMenuBar)
 
