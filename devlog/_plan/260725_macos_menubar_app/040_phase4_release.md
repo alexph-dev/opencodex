@@ -89,7 +89,10 @@ Staging, then atomic swap:
 
 ```bash
 mkdir -p "$output_root"
-output_root="$(cd "$output_root" && pwd -P)"
+# Resolve physically AND normalise: walking up to the nearest existing ancestor and
+# re-appending the tail verbatim was a real bypass — <repo>/.nope/../../outside resolved
+# to itself, passed the prefix check, and mkdir -p then followed the .. out of the repo.
+output_root="$(resolve_physical "$output_root")"
 staging_root="$(mktemp -d "$output_root/.OpenCodex-build.XXXXXX")"
 staged_app="$staging_root/OpenCodex.app"
 iconset="$staging_root/OpenCodex.iconset"
@@ -384,7 +387,9 @@ broken.
        one to three integers — `MACOS_BUILD_NUMBER` replaces it outright rather than
        appending a fourth component, which Apple ignores.
    3b. `OUTPUT_DIR` outside the repository or temp is refused, since the build deletes
-       whatever sits at the destination.
+       whatever sits at the destination. Covered by `tests/macos-build-script.test.ts`,
+       including an unresolved `..` traversal and a symlinked destination, and asserting
+       that a refused path creates no directory.
 4. `UNIVERSAL=1` under Command Line Tools fails with the explanatory message, not a
    linker error.
 5. The build script runs end to end on a clean checkout under `set -euo pipefail`, with

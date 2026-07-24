@@ -26,17 +26,31 @@ fi
 # Resolve physically: walk up to the nearest existing ancestor, resolve that, and
 # re-append the parts that do not exist yet.
 resolve_physical() {
-  local target="$1" tail=""
+  local target="$1" tail="" part resolved
   # Absolute-ise relative input against the caller's directory.
   [[ "$target" = /* ]] || target="$PWD/$target"
+
+  # Walk up to the nearest EXISTING ancestor and resolve that physically, collecting the
+  # not-yet-existing components on the way.
   while [[ ! -d "$target" && "$target" != "/" ]]; do
     tail="$(basename "$target")${tail:+/$tail}"
     target="$(dirname "$target")"
   done
-  local resolved
   resolved="$(cd "$target" && pwd -P)"
-  printf '%s' "${tail:+$resolved/$tail}${tail:+}"
-  [[ -n "$tail" ]] || printf '%s' "$resolved"
+
+  # Normalise the collected tail. Re-appending it verbatim was a real bypass: a path
+  # like <repo>/.does-not-exist/../../outside resolved to itself, satisfied the prefix
+  # check, and then `mkdir -p` followed the `..` components straight out of the
+  # repository — after which the destructive replace ran outside the permitted roots.
+  local IFS=/
+  for part in $tail; do
+    case "$part" in
+      "" | ".") continue ;;
+      "..") resolved="$(dirname "$resolved")" ;;
+      *) resolved="$resolved/$part" ;;
+    esac
+  done
+  printf '%s' "$resolved"
 }
 
 output_root="$(resolve_physical "$output_root")"
