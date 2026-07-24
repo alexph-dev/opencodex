@@ -53,8 +53,10 @@ public final class PopoverViewController: NSViewController {
     public var onStop: (() -> Void)?
     public var onQuit: (() -> Void)?
     public var onRefresh: (() -> Void)?
-    /// Invoked by the state-specific primary button.
-    public var onPrimaryAction: (() -> Void)?
+    /// Distinct callbacks: "Retry" must retry in place, while "Add key…" navigates to
+    /// the dashboard. Routing both through one handler made Retry open a browser.
+    public var onAddKey: (() -> Void)?
+    public var onRetry: (() -> Void)?
 
     private var snapshot: ProxySnapshot?
     private var scrollHeight: NSLayoutConstraint?
@@ -72,6 +74,10 @@ public final class PopoverViewController: NSViewController {
         )
         body.translatesAutoresizingMaskIntoConstraints = false
 
+        // A flipped clip view puts the scroll origin at the TOP. Without this, content
+        // that overflows opens scrolled to the bottom, hiding the status and metrics the
+        // urgency order exists to surface first.
+        scrollView.contentView = FlippedClipView()
         scrollView.documentView = body
         scrollView.hasVerticalScroller = true
         scrollView.autohidesScrollers = true
@@ -235,7 +241,8 @@ public final class PopoverViewController: NSViewController {
         case .addAPIKey:
             guidance = "This proxy is bound to a non-loopback address and needs a key."
         case .retry:
-            guidance = "Showing data from \(Format.age(snapshot.lastUpdated)). Retrying automatically."
+            guidance = snapshot.dataAge.map { "Showing data from \(Format.age($0)). Retrying automatically." }
+                ?? "Retrying automatically."
         }
 
         guidanceLabel.isHidden = guidance == nil
@@ -288,7 +295,13 @@ public final class PopoverViewController: NSViewController {
 
     @objc private func dashboardTapped() { onDashboard?() }
     @objc private func stopTapped() { onStop?() }
-    @objc private func primaryTapped() { onPrimaryAction?() }
+    @objc private func primaryTapped() {
+        switch snapshot?.nextAction {
+        case .addAPIKey: onAddKey?()
+        case .retry: onRetry?()
+        default: break
+        }
+    }
     @objc private func refreshTapped() { onRefresh?() }
     @objc private func quitTapped() { onQuit?() }
 
@@ -306,6 +319,11 @@ public final class PopoverViewController: NSViewController {
     public override func cancelOperation(_ sender: Any?) {
         view.window?.performClose(nil)
     }
+}
+
+/// Top-anchored clip view. AppKit scroll views are bottom-origin by default.
+final class FlippedClipView: NSClipView {
+    override var isFlipped: Bool { true }
 }
 
 /// Loading structure: grey bars where values will appear, so the first paint shows the

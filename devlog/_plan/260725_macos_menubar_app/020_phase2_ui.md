@@ -255,7 +255,7 @@ its own:
 
 | Section | Empty condition | Copy | Action |
 | --- | --- | --- | --- |
-| Metrics | `summary` present, `requests == 0` | "No requests in the last 7 days." | Dashboard |
+| Metrics | `summary` present, `requests == 0` | "No requests in this period." | Dashboard |
 | Usage trend | `days` empty or all-zero | bars omitted entirely, no flat line | none |
 | Quotas | `reports` empty | "No provider quota sources connected." | Dashboard |
 | Providers | `providers` empty | "No providers configured." | Dashboard |
@@ -300,6 +300,21 @@ reproduced visually or with a stub before being folded:
 
 Also folded: `UIProbe` now captures with `CGWindowListCreateImage` rather than `Process`,
 so nothing under `app/` constructs a subprocess (`030` security rule).
+
+### Round 2 (6 findings)
+
+| Finding | Correction |
+| --- | --- |
+| Escape still did not close the popover — activating before presentation left an accessory app without key focus | Activate on the next main-loop turn *after* `show(relativeTo:)`, then set key window and first responder. Verified by synthesizing keycode 53 into the app's own queue: shown `true` before, `false` after |
+| Overflowing content opened scrolled to the bottom, hiding the status and metrics | `FlippedClipView` so the scroll origin is top-anchored |
+| Close-then-immediate-reopen could drop the reopen's refresh entirely | `pendingOpenRefresh` queued while a cycle holds the lock, drained on every exit path |
+| Closing mid-sequence still issued later requests, and a partial aggregation failure re-fetched its healthy sibling every 5s | `isCurrent(cycle)` re-checked before each request; aggregation rate-limited on ATTEMPT, not success |
+| "Retry" opened a browser | Separate `onAddKey` and `onRetry` callbacks; Retry only refreshes |
+| Degraded claimed a data age derived from the last *health* probe | `healthUpdated` and `usageUpdated` split; `showsData` requires real loaded sections, and the guidance quotes `dataAge` |
+
+The overflow menu ships `Refresh`, `Open dashboard`, and `Quit` rather than the
+originally sketched `Preferences`: there is no preferences surface to open yet, and a
+menu item that opens nothing is worse than its absence.
 
 ## Accept criteria
 

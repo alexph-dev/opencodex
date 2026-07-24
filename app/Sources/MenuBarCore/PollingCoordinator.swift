@@ -21,6 +21,13 @@ public actor PollingCoordinator {
     /// abandoned cycle can be discarded instead of overwriting fresher state.
     private var generation = 0
     private var refreshInFlight = false
+    /// A refresh requested while another was in flight. Without this, closing and
+    /// immediately reopening the popover dropped the reopen's refresh entirely: the old
+    /// cycle exited on its generation guard and the new one had already been rejected.
+    private var pendingOpenRefresh = false
+    /// Attempt time, distinct from success time: a persistently failing endpoint must
+    /// not turn its healthy sibling into a 5-second poller.
+    private var lastAggregationAttempt: Date?
 
     public init(client: ProxyClient, endpoint: ProxyEndpoint) {
         self.client = client
@@ -64,7 +71,10 @@ public actor PollingCoordinator {
     /// the 60s interval so reopening the popover repeatedly does not hammer the proxy.
     public func refresh(includeHeavy: Bool = false) async {
         // Overlapping cycles publish interleaved state and double the request rate.
-        guard !refreshInFlight else { return }
+        guard !refreshInFlight else {
+            if includeHeavy { pendingOpenRefresh = true }
+            return
+        }
         refreshInFlight = true
         generation &+= 1
         let cycle = generation
@@ -78,18 +88,21 @@ public actor PollingCoordinator {
             snapshot.recommendedCommand = health.recommendedCommand
             snapshot.consecutiveFailures = 0
             snapshot.lastUpdated = Date()
+            snapshot.healthUpdated = Date()
         } catch is CancellationError {
             // The popover closed mid-flight. Not a proxy failure; leave state untouched.
+            refreshInFlight = false
+            await drainPendingRefresh()
             return
         } catch let error as ProxyError {
-            guard cycle == generation else { return }
-            apply(error)
-            publish()
+            if cycle == generation { apply(error); publish() }
+            refreshInFlight = false
+            await drainPendingRefresh()
             return
         } catch {
-            guard cycle == generation else { return }
-            apply(.transport)
-            publish()
+            if cycle == generation { apply(.transport); publish() }
+            refreshInFlight = false
+            await drainPendingRefresh()
             return
         }
 
@@ -97,47 +110,69 @@ public actor PollingCoordinator {
             // Cheap, changes rarely, and only meaningful while the popover is visible.
             await refreshOnOpen(cycle: cycle)
 
-            let aggregationDue = lastHeavyRefresh.map {
+            // Rate-limit on ATTEMPT, not success: gating on success alone meant one
+            // persistently failing endpoint re-fetched its healthy sibling every 5s.
+            let aggregationDue = lastAggregationAttempt.map {
                 Date().timeIntervalSince($0) >= Self.heavyInterval
             } ?? true
-            if includeHeavy && aggregationDue || (!includeHeavy && aggregationDue) {
+            if aggregationDue {
+                lastAggregationAttempt = Date()
                 let completed = await refreshAggregation(cycle: cycle)
-                // Only a fully successful aggregation counts as fresh; otherwise the
-                // next cycle retries instead of waiting out a 60s window on stale data.
                 if completed { lastHeavyRefresh = Date() }
             }
         }
 
-        guard cycle == generation else { return }
-        publish()
+        if cycle == generation { publish() }
+        refreshInFlight = false
+        await drainPendingRefresh()
+    }
+
+    /// Runs a refresh that arrived while another cycle held the lock.
+    private func drainPendingRefresh() async {
+        guard pendingOpenRefresh, popoverOpen else {
+            pendingOpenRefresh = false
+            return
+        }
+        pendingOpenRefresh = false
+        await refresh(includeHeavy: true)
     }
 
     /// Reads that are only meaningful while the popover is open.
     private func refreshOnOpen(cycle: Int) async {
-        if let providers = try? await client.providers(), cycle == generation {
+        guard isCurrent(cycle) else { return }
+        if let providers = try? await client.providers(), isCurrent(cycle) {
             snapshot.providers = providers
             snapshot.providersLoaded = true
         }
-        if let config = try? await client.config(), cycle == generation {
+        // Re-check before each subsequent request: closing mid-flight should stop the
+        // sequence, not merely discard its results after paying for them.
+        guard isCurrent(cycle) else { return }
+        if let config = try? await client.config(), isCurrent(cycle) {
             snapshot.defaultProvider = config.defaultProvider
         }
     }
 
+    /// Still the newest cycle, and still worth doing.
+    private func isCurrent(_ cycle: Int) -> Bool { cycle == generation && popoverOpen }
+
     /// The expensive aggregation reads. Returns whether every read landed, so a partial
     /// failure does not masquerade as a completed refresh.
     private func refreshAggregation(cycle: Int) async -> Bool {
+        guard isCurrent(cycle) else { return false }
         var complete = true
 
         // Each read is independent: one failing endpoint must not blank the others.
         if let usage = try? await client.usage(range: .sevenDays) {
-            guard cycle == generation else { return false }
+            guard isCurrent(cycle) else { return false }
             snapshot.usage = usage
+            snapshot.usageUpdated = Date()
         } else {
             complete = false
         }
 
+        guard isCurrent(cycle) else { return false }
         if let quotas = try? await client.quotas() {
-            guard cycle == generation else { return false }
+            guard isCurrent(cycle) else { return false }
             snapshot.quotas = quotas
             snapshot.quotasLoaded = true
         } else {

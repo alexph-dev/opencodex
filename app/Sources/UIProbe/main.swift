@@ -48,12 +48,24 @@ final class ProbeDelegate: NSObject, NSApplicationDelegate {
             case "degraded":
                 snap = ProxySnapshot(state: .degraded("The proxy returned an unexpected status (503)."),
                                      endpoint: endpoint, lastUpdated: Date().addingTimeInterval(-120))
+            case "overflow":
+                let many = (1...24).map { i in
+                    #"{"provider":"p\#(i)","label":"Provider \#(i)","quota":{"weeklyPercent":\#(i * 3)}}"#
+                }.joined(separator: ",")
+                let quotas = (try? JSONDecoder().decode([QuotaReport].self, from: Data("[\(many)]".utf8))) ?? []
+                let usage = try? JSONDecoder().decode(
+                    UsageReport.self,
+                    from: Data(#"{"range":"7d","summary":{"requests":100},"days":[{"date":"d","requests":100}]}"#.utf8))
+                snap = ProxySnapshot(state: .running(StartupHealth(status: "protected", protection: "service")),
+                                     endpoint: endpoint, usage: usage, quotas: quotas,
+                                     quotasLoaded: true)
             case "empty":
                 let usage = try? JSONDecoder().decode(
                     UsageReport.self,
                     from: Data(#"{"range":"7d","summary":{"requests":0},"days":[]}"#.utf8))
                 snap = ProxySnapshot(state: .running(StartupHealth(status: "protected", protection: "service")),
-                                     endpoint: endpoint, usage: usage, quotas: [], providers: [])
+                                     endpoint: endpoint, usage: usage, quotas: [], providers: [],
+                                     providersLoaded: true, quotasLoaded: true)
             default:
                 await coordinator.setPopoverOpen(true)
                 snap = await coordinator.current

@@ -93,6 +93,11 @@ public struct ProxySnapshot: Equatable, Sendable {
     /// reported none" render differently.
     public var providersLoaded: Bool
     public var quotasLoaded: Bool
+    /// When health last succeeded, versus when the aggregation data last succeeded.
+    /// Conflating them let a degraded state claim "showing data from 5s ago" while
+    /// holding no metrics at all.
+    public var healthUpdated: Date?
+    public var usageUpdated: Date?
 
     public init(
         state: ProxyState = .loading,
@@ -106,7 +111,9 @@ public struct ProxySnapshot: Equatable, Sendable {
         lastKnownStartCommand: String? = nil,
         recommendedCommand: String? = nil,
         providersLoaded: Bool = false,
-        quotasLoaded: Bool = false
+        quotasLoaded: Bool = false,
+        healthUpdated: Date? = nil,
+        usageUpdated: Date? = nil
     ) {
         self.state = state
         self.endpoint = endpoint
@@ -120,6 +127,8 @@ public struct ProxySnapshot: Equatable, Sendable {
         self.recommendedCommand = recommendedCommand
         self.providersLoaded = providersLoaded
         self.quotasLoaded = quotasLoaded
+        self.healthUpdated = healthUpdated
+        self.usageUpdated = usageUpdated
     }
 
     /// Whether the data sections are worth rendering at all.
@@ -130,10 +139,15 @@ public struct ProxySnapshot: Equatable, Sendable {
     public var showsData: Bool {
         switch state {
         case .running: return true
-        case .degraded: return lastUpdated != nil
+        // Only claim stale data when data was actually loaded. Health succeeding while
+        // the popover was closed is not the same as having metrics to show.
+        case .degraded: return usage != nil || quotasLoaded
         case .loading, .unreachable, .unauthorized: return false
         }
     }
+
+    /// Age of the DATA, not of the last health probe.
+    public var dataAge: Date? { usageUpdated }
 
     /// True once the proxy has been read at least once, so `loading` can show skeletons
     /// rather than empty copy.

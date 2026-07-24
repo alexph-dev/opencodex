@@ -34,7 +34,8 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         controller.onDashboard = { [weak self] in self?.openDashboard() }
         controller.onStop = { [weak self] in self?.stopProxy() }
         controller.onRefresh = { [weak self] in self?.refreshNow() }
-        controller.onPrimaryAction = { [weak self] in self?.primaryAction() }
+        controller.onAddKey = { [weak self] in self?.openDashboard() }
+        controller.onRetry = { [weak self] in self?.refreshNow() }
         controller.onQuit = { NSApp.terminate(nil) }
 
         popover.contentViewController = controller
@@ -94,13 +95,16 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         if popover.isShown {
             popover.performClose(nil)
         } else {
-            // An accessory app is not active by default, so its popover would never
-            // take key focus and the keyboard path would silently not work.
-            NSApp.activate(ignoringOtherApps: true)
             popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
-            if let window = popover.contentViewController?.view.window {
+            // Activation has to happen AFTER presentation and on a later main-loop turn:
+            // an accessory process is inactive by default, and activating before the
+            // popover window exists leaves it without key focus, so no key event —
+            // including Escape — ever reaches it.
+            DispatchQueue.main.async { [weak self] in
+                guard let self, let window = self.popover.contentViewController?.view.window else { return }
+                NSApp.activate(ignoringOtherApps: true)
                 window.makeKeyAndOrderFront(nil)
-                window.makeFirstResponder(popover.contentViewController?.view)
+                window.makeFirstResponder(self.controller.view)
             }
         }
     }
@@ -131,13 +135,6 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
 
     private func openDashboard() {
         NSWorkspace.shared.open(endpoint.baseURL)
-    }
-
-    /// The state-specific call to action. Both current cases route the user to the
-    /// place they can actually resolve the problem.
-    private func primaryAction() {
-        openDashboard()
-        refreshNow()
     }
 
     /// Stopping is destructive: it interrupts in-flight requests and stops the launchd
