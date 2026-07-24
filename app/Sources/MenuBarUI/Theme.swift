@@ -18,12 +18,19 @@ enum Theme {
     // tertiary tier is intended for disabled affordances, not for information the user
     // has to read, and every label using this tier here (range heading, metric captions,
     // quota window labels) carries real meaning. Calibrated tokens replace it.
-    static let text = NSColor.labelColor
-    static let muted = NSColor.secondaryLabelColor
+    /// All three text tiers are calibrated against the RENDERED popover material, not
+    /// picked from AppKit's semantic palette. Measured backgrounds: light (220,219,218),
+    /// dark (102,101,101).
+    ///
+    /// The dark material constrains this hard — pure white measures only 5.81:1 against
+    /// it — so the tiers are packed into the band that remains while keeping every text
+    /// tier above 4.5:1 and preserving `text > muted > faint` in both appearances.
+    static let text = dynamic(light: 0x1A1A1A, dark: 0xFFFFFF)
+    static let muted = dynamic(light: 0x3D3D3D, dark: 0xF2F2F2)
     /// Small supporting text that must still be legible: 10-11pt captions and labels.
-    static let faint = dynamic(light: 0x55534F, dark: 0xB8B6B3)
-    /// Graphical marks only, held to the 3:1 non-text threshold.
-    static let graphMark = dynamic(light: 0x8A8782, dark: 0x94918C)
+    static let faint = dynamic(light: 0x545454, dark: 0xEDEDED)
+    /// Graphical marks only, held to the 3:1 non-text threshold rather than 4.5:1.
+    static let graphMark = dynamic(light: 0x707070, dark: 0xD2D2D2)
 
     // State colours, taken verbatim from styles.css.
     static let green = dynamic(light: 0x0A7D5C, dark: 0x4ECB9D)

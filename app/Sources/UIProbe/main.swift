@@ -18,8 +18,8 @@ import AppKit
 import MenuBarCore
 import MenuBarUI
 
-// Renders the popover in a plain window and screenshots it, so the UI can be inspected
-// without depending on menu bar space being available.
+// Presents the real PopoverPanel over a contrasting backdrop and captures it through the
+// window server, so the UI can be inspected without depending on menu bar space.
 final class ProbeDelegate: NSObject, NSApplicationDelegate {
     let controller = PopoverViewController()
     var window: NSWindow?

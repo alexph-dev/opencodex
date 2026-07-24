@@ -377,14 +377,36 @@ panel for lifecycle symmetry.
 | Finding | Correction |
 | --- | --- |
 | Escape during the Stop confirmation dismissed the panel and left the alert stranded with no way to cancel | The Escape monitor now returns the event unchanged while `isPresentingModal`, so `NSAlert` handles it as Cancel |
-| `tertiaryLabelColor` measured **2.01:1** in light and **2.39:1** in dark against the popover material, far under the 4.5:1 needed for text | Calibrated `faint` and a separate `graphMark` token. Re-measured on the rendered panel: **7.27:1** light, **4.98:1** dark |
+| `tertiaryLabelColor` measured **2.01:1** in light and **2.39:1** in dark against the popover material, far under the 4.5:1 needed for text | All four tiers recalibrated against the rendered material — see the table below |
 
 The contrast finding is worth naming precisely: AppKit's tertiary tier is intended for
 disabled affordances, and it was being used for the range heading, metric captions, and
 quota window labels — all information the user actually has to read. "It is a system
 semantic colour" is not the same as "it is legible on this material."
 
-Contrast is now measured from the rendered PNG rather than assumed from tokens, and the
+### Round 6: the contrast numbers, measured properly
+
+My first correction was itself wrong: the sampling picked the darkest pixel in a band,
+which is primary `text`, not `faint`. Corrected method — count pixels matching each exact
+token value in the rendered PNG, so a tier cannot be measured by sampling a different one.
+
+Backgrounds as rendered: light `(220,219,218)`, dark `(103,102,102)`.
+
+| Token | Light | Dark | Threshold |
+| --- | ---: | ---: | ---: |
+| `text` | 12.59:1 | 5.72:1 | 4.5 |
+| `muted` | 7.86:1 | 5.11:1 | 4.5 |
+| `faint` | 5.48:1 | 4.89:1 | 4.5 |
+| `graphMark` | 3.58:1 | 3.79:1 | 3.0 (non-text) |
+
+Every tier passes and `text > muted > faint` holds in both appearances.
+
+The dark material is the binding constraint: **pure white measures only 5.81:1 against
+it**, so the three text tiers have to fit inside a 1.3-point band. That is why the dark
+values cluster — there is no room for the airy separation the light palette allows, and
+choosing AppKit's semantic tiers instead would silently reintroduce the failure.
+
+Contrast is measured from the rendered PNG rather than assumed from token names, and the
 probe can force an appearance (`PROBE_APPEARANCE=dark`) without touching system settings.
 
 ## Accept criteria
