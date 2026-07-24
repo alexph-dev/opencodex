@@ -390,7 +390,10 @@ My first correction was itself wrong: the sampling picked the darkest pixel in a
 which is primary `text`, not `faint`. Corrected method — count pixels matching each exact
 token value in the rendered PNG, so a tier cannot be measured by sampling a different one.
 
-Backgrounds as rendered: light `(220,219,218)`, dark `(103,102,102)`.
+Backgrounds as rendered: light `(220,219,218)`, dark `(103,102,102)`. The dark material
+is not perfectly flat — the dominant pixel is `(102,101,101)` and adjacent pixels read
+`(103,102,102)`. The table below uses the lighter of the two, which is the stricter test;
+the 5.81:1 ceiling quoted afterwards is measured against `(102,101,101)`.
 
 | Token | Light | Dark | Threshold |
 | --- | ---: | ---: | ---: |

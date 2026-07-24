@@ -3,9 +3,15 @@ import AppKit
 /// Tokens derived from `gui/src/styles.css` so the companion and the dashboard agree on
 /// what "healthy" looks like.
 ///
-/// Where AppKit already has a semantic colour, it wins over a hardcoded hex: it tracks
-/// light/dark *and* the increased-contrast and vibrancy accessibility settings, which a
+/// For SURFACES, AppKit's semantic colours win over a hardcoded hex: they track
+/// light/dark plus the increased-contrast and vibrancy accessibility settings, which a
 /// literal cannot.
+///
+/// The TEXT tiers are a deliberate exception. Measured against the popover material,
+/// `tertiaryLabelColor` renders at 2.01:1 in light and 2.39:1 in dark — it is designed
+/// for disabled affordances, not for information the user has to read. All four text and
+/// mark tokens below are therefore calibrated against the rendered material and verified
+/// numerically rather than trusted by name.
 enum Theme {
     // Surfaces
     static let separator = NSColor.separatorColor
