@@ -254,5 +254,63 @@ enum ActionSuite {
             }
             t.equal(outcomes, [.succeeded, .succeeded])
         }
+
+        // The distinction that matters: only a refused connection proves the proxy is
+        // gone. Collapsing timeouts into "unreachable" is what made a stop report as
+        // confirmed while the proxy was still running.
+        t.test("liveness: only a refused connection reads as gone") {
+            let cases: [(URLError.Code, ProxyClient.Liveness, String)] = [
+                (.cannotConnectToHost, .refused, "connection refused"),
+                (.timedOut, .indeterminate, "timeout"),
+                (.networkConnectionLost, .indeterminate, "socket dropped"),
+                (.cannotFindHost, .indeterminate, "host lookup"),
+                (.notConnectedToInternet, .indeterminate, "no network"),
+            ]
+            for (code, expected, label) in cases {
+                StubProtocol.reset([.init(status: 0, body: "", urlError: code)])
+                let client = ProxyClient(endpoint: .default, session: makeSession(), credentials: NoCredentials())
+                t.equal(sync { await client.liveness() }, expected, label)
+            }
+        }
+
+        t.test("liveness: any HTTP answer proves the port is occupied") {
+            for status in [200, 401, 403, 500] {
+                let body = status == 200 ? #"{"port":10100}"# : ""
+                StubProtocol.reset([
+                    .init(status: status, body: body, urlError: nil),
+                    .init(status: status, body: body, urlError: nil),
+                ])
+                let client = ProxyClient(endpoint: .default, session: makeSession(),
+                                         credentials: StubCredentialsFixed(key: "k"))
+                t.equal(sync { await client.liveness() }, .reachable, "status \(status)")
+            }
+        }
+
+        t.test("liveness: an undecodable 200 is reachable, not gone") {
+            StubProtocol.reset([.init(status: 200, body: "not json at all", urlError: nil)])
+            let client = ProxyClient(endpoint: .default, session: makeSession(), credentials: NoCredentials())
+            t.equal(sync { await client.liveness() }, .reachable)
+        }
+
+        // A timeout must not end the stop as a confirmed success.
+        t.test("stop: a timeout during polling never confirms the stop") {
+            var responses: [StubProtocol.Response] = [.init(status: 200, body: "{}", urlError: nil)]
+            responses.append(contentsOf: Array(
+                repeating: .init(status: 0, body: "", urlError: .timedOut), count: 400))
+            StubProtocol.reset(responses)
+            let clock = FakeClock()
+            let outcome = sync { await makeCoordinator(clock: clock).stop(startCommand: "ocx start") }
+            if case .failed(let message) = outcome {
+                t.expect(message.contains("could not be confirmed"),
+                         "expected an inconclusive message, got \(message)")
+            } else {
+                t.expect(false, "expected .failed, got \(outcome)")
+            }
+        }
+    }
+
+    private struct StubCredentialsFixed: CredentialStore {
+        let key: String?
+        func loadAPIKey() -> String? { key }
     }
 }

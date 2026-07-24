@@ -208,7 +208,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
     /// rather than leave the UI showing a state the proxy refused.
     private func toggleProvider(_ name: String, disable: Bool) {
         let defaultProvider = latest?.defaultProvider
-        controller.setProviderBusy(name, true)
+        controller.setProviderBusy(name, true, intended: !disable)
 
         Task { [actions, coordinator] in
             let outcome = await actions?.setProvider(name, disabled: disable, defaultProvider: defaultProvider)
@@ -229,8 +229,10 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
                 }
             }
             // Re-read so the summary line and switch states match the proxy, not our
-            // optimistic guess.
-            await coordinator?.refresh(includeHeavy: true)
+            // optimistic guess. refreshAndWait rather than refresh: a coalesced refresh
+            // returns immediately, which would re-enable the switch against pre-write
+            // data.
+            await coordinator?.refreshAndWait()
             await MainActor.run { [weak self] in
                 self?.controller.setProviderBusy(name, false)
             }

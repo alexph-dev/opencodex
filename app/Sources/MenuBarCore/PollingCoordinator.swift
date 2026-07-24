@@ -129,6 +129,21 @@ public actor PollingCoordinator {
         await drainPendingRefresh()
     }
 
+    /// Refreshes and does not return until a cycle has actually completed.
+    ///
+    /// `refresh()` coalesces: if another cycle holds the lock it queues and returns
+    /// immediately. A caller that needs authoritative state afterwards — such as
+    /// re-enabling a switch after a write — would otherwise act on pre-write data.
+    public func refreshAndWait(includeHeavy: Bool = true) async {
+        await refresh(includeHeavy: includeHeavy)
+        // If this call was coalesced, wait for the cycle that absorbed it.
+        var spins = 0
+        while (refreshInFlight || pendingOpenRefresh), spins < 100 {
+            spins += 1
+            try? await Task.sleep(nanoseconds: 50_000_000)
+        }
+    }
+
     /// Runs a refresh that arrived while another cycle held the lock.
     private func drainPendingRefresh() async {
         guard pendingOpenRefresh, popoverOpen else {
@@ -191,7 +206,8 @@ public actor PollingCoordinator {
             snapshot.state = .unreachable
         case .unauthorized:
             snapshot.state = .unauthorized
-        case .http, .decoding, .transport:
+        case .http, .decoding, .transport, .inconclusive:
+            // A timeout is degraded, not stopped: something may well still be running.
             snapshot.state = .degraded(error.userMessage)
         }
     }

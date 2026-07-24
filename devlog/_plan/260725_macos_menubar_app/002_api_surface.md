@@ -202,7 +202,9 @@ drives the toggle in Phase 3.
 stopServiceIfInstalled();
 const restore = restoreNativeCodex();
 setTimeout(async () => { await drainAndShutdown(...); process.exit(0); }, 200);
-return jsonResponse({ success: true, message: "Proxy stopping, native Codex restored." });
+return jsonResponse(restore.success
+  ? { success: true,  message: "Proxy stopping, native Codex restored." }
+  : { success: false, message: "Proxy stopping, but native Codex restore failed: … Run `ocx restore`." });
 ```
 
 The response body carries a `success` boolean: `false` when `restoreNativeCodex()`

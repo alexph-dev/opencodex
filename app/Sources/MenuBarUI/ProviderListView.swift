@@ -11,8 +11,10 @@ final class ProviderListView: NSView {
     private let rows = NSStackView()
     private var expanded = false
     private var snapshot: ProxySnapshot?
-    /// Providers with a write in flight; their rows must not be reset by a poll.
-    private var pending: Set<String> = []
+    /// Providers with a write in flight, mapped to the state the USER chose. A poll can
+    /// still be carrying pre-write data, so the intended value — not the snapshot — is
+    /// what a rebuilt row must show.
+    private var pending: [String: Bool] = [:]
 
     /// `(provider, shouldDisable)`.
     var onToggle: ((String, Bool) -> Void)?
@@ -90,8 +92,12 @@ final class ProviderListView: NSView {
             ) { [weak self] shouldDisable in
                 self?.onToggle?(provider.name, shouldDisable)
             }
-            // A refresh that lands mid-write must not undo the optimistic state.
-            if pending.contains(provider.name) { row.setBusy(true) }
+            // A refresh that lands mid-write must not undo the optimistic state: apply
+            // the intended value first, then mark the row busy.
+            if let intended = pending[provider.name] {
+                row.setEnabled(intended)
+                row.setBusy(true)
+            }
             row.translatesAutoresizingMaskIntoConstraints = false
             rows.addArrangedSubview(row)
             row.widthAnchor.constraint(equalTo: rows.widthAnchor).isActive = true
@@ -108,7 +114,7 @@ final class ProviderListView: NSView {
 
     /// Reverts a switch after the proxy rejected the change.
     func revert(_ name: String, to enabled: Bool) {
-        pending.remove(name)
+        pending[name] = nil
         for case let row as ProviderRowView in rows.arrangedSubviews where row.providerName == name {
             row.setEnabled(enabled)
             row.setBusy(false)
@@ -118,9 +124,16 @@ final class ProviderListView: NSView {
     /// Marks a provider as having a write in flight. Its switch stays inert until the
     /// authoritative refresh lands, so a poll cannot resurrect the pre-toggle state and
     /// a second click cannot race the first.
-    func setBusy(_ name: String, _ busy: Bool) {
-        if busy { pending.insert(name) } else { pending.remove(name) }
+    /// `intended` is the state the user selected, retained so a poll landing mid-write
+    /// cannot snap the switch back.
+    func setBusy(_ name: String, _ busy: Bool, intended: Bool? = nil) {
+        if busy {
+            pending[name] = intended ?? pending[name] ?? true
+        } else {
+            pending[name] = nil
+        }
         for case let row as ProviderRowView in rows.arrangedSubviews where row.providerName == name {
+            if busy, let value = pending[name] { row.setEnabled(value) }
             row.setBusy(busy)
         }
     }

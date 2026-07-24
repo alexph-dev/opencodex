@@ -1,8 +1,10 @@
 # 030 — Phase 3: write actions on existing endpoints
 
 **Depends on:** `020` (the UI must exist to report a result into).
-**Independently verifiable by:** a live stop and a live provider toggle against the
-running proxy, with the observed response and the resulting UI state.
+**Independently verifiable by:** a live provider toggle against the running proxy, plus
+the stubbed transport suite for stop. Stopping the developer's own proxy is out of
+bounds, and the branches that matter cannot be produced on demand from a healthy one —
+see the amended acceptance criterion 1.
 
 Constraint from the user's scope: **no new proxy endpoints.** Everything here calls
 routes inventoried in `002` §4.
@@ -34,15 +36,14 @@ actually happened, the provider toggle UI, and result feedback in the popover.
 ## `ProxyClient` additions
 
 ```swift
-public func stop() async throws {
-    var request = URLRequest(url: endpoint.baseURL.appendingPathComponent("api/stop"))
-    request.httpMethod = "POST"
-    request.timeoutInterval = 6
-    if let key = apiKey { request.setValue(key, forHTTPHeaderField: "x-opencodex-api-key") }
-    let (_, response) = try await session.data(for: request)
-    guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
-        throw ProxyError.http((response as? HTTPURLResponse)?.statusCode ?? -1)
-    }
+/// Returns whether the proxy also restored native Codex on the way out. The response
+/// carries `success: false` when `restoreNativeCodex()` failed; only the boolean is
+/// decoded, never the server-formatted message.
+@discardableResult
+public func stop() async throws -> Bool {
+    let data = try await send(method: "POST", path: "api/stop", body: nil as EmptyBody?)
+    guard let result = try? JSONDecoder().decode(StopResult.self, from: data) else { return true }
+    return result.success ?? true
 }
 
 public func setProviderDisabled(_ name: String, disabled: Bool) async throws {
@@ -95,16 +96,30 @@ public enum ActionOutcome: Equatable, Sendable {
     case requiresManualStart     // stop confirmed; the app cannot relaunch it
 }
 
-public func stopProxy() async -> ActionOutcome {
-    do { try await client.stop() } catch { return .failed("Could not reach the proxy to stop it.") }
+public func stop(startCommand: String) async -> ActionOutcome {
+    let restored: Bool
+    do { restored = try await client.stop() }
+    catch let error as ProxyError { return .failed(error.userMessage) }
+    catch { return .failed("Could not reach the proxy to stop it.") }
 
-    // Poll until the port stops answering, up to 10s, before claiming anything.
-    let deadline = Date().addingTimeInterval(10)
-    while Date() < deadline {
-        try? await Task.sleep(for: .milliseconds(500))
-        if await !client.isReachable() { return .requiresManualStart }
+    // Poll until the connection is REFUSED. Any HTTP answer — including 500 or an
+    // undecodable body — proves a server is still listening, and a timeout proves
+    // nothing at all.
+    let deadline = now().addingTimeInterval(Self.stopTimeout)
+    var sawIndeterminate = false
+    while now() < deadline {
+        await sleeper(Self.pollInterval)
+        switch await client.liveness() {
+        case .refused:
+            return restored ? .requiresManualStart(startCommand)
+                            : .stoppedWithRestoreFailure(startCommand)
+        case .reachable:   sawIndeterminate = false
+        case .indeterminate: sawIndeterminate = true
+        }
     }
-    return .failed("The proxy did not stop within 10 seconds.")
+    return .failed(sawIndeterminate
+        ? "The proxy accepted the stop, but its state could not be confirmed. Check with `ocx status`."
+        : "The proxy accepted the stop but was still responding after 10 seconds.")
 }
 ```
 
@@ -120,9 +135,11 @@ Per `dev-uiux-design` UX-LAZY-01, firing a request guaranteed to fail is not acc
 The toggle is disabled up front with an explanatory tooltip:
 
 ```swift
-let isDefault = provider.name == config.defaultProvider
-toggle.isEnabled = !isDefault
-toggle.toolTip = isDefault
+// The proxy guard is `rawBody.disabled && name === defaultProvider`, so only DISABLING
+// the default is refused. A default provider that is already off must stay toggleable.
+let wouldDisableDefault = isDefault && provider.isEnabled
+toggle.isEnabled = !wouldDisableDefault
+toggle.toolTip = wouldDisableDefault
     ? "This is the default provider. Choose another default in the dashboard first."
     : nil
 ```
@@ -178,6 +195,17 @@ Stubbed `URLProtocol`:
 - No error path leaks a response body into `ActionOutcome`.
 
 ## Code-review corrections (folded before B closed)
+
+### Round 2
+
+| Finding | Correction |
+| --- | --- |
+| `.timedOut` and `.networkConnectionLost` were still mapped to `.unreachable`, so the three-state contract was two states in practice and a timeout could confirm a false stop | New `ProxyError.inconclusive`; only `.cannotConnectToHost` becomes `.refused`. Liveness probes also take a 1.5s timeout so one probe cannot overrun the stop deadline |
+| `rebuildRows()` initialised switches from the snapshot, so a poll landing mid-write visibly snapped the switch back despite the row being busy | `pending` now stores the intended value, applied before the row is marked busy |
+| The post-write refresh coalesced and returned immediately, so the switch became interactive against pre-write data | `refreshAndWait()` waits for a cycle to actually complete |
+| The document still required a live stop at the top and carried pre-review snippets | Verification line and all three snippets updated to what shipped |
+
+### Round 1
 
 | Finding | Correction |
 | --- | --- |

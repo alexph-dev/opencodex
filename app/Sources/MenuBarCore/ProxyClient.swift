@@ -9,6 +9,9 @@ public enum ProxyError: Error, Equatable {
     case decoding
     /// A transport failure that is not evidence the proxy is down (TLS, policy, DNS).
     case transport
+    /// The request never completed — a timeout or a socket dropped mid-response. This
+    /// proves nothing either way, and must not be read as "the proxy is gone".
+    case inconclusive
 
     /// Human sentences only. Response bodies can echo configuration values, so they
     /// never reach the UI or a log.
@@ -19,6 +22,7 @@ public enum ProxyError: Error, Equatable {
         case .http(let code): return "The proxy returned an unexpected status (\(code))."
         case .decoding: return "The proxy returned a response this app could not read."
         case .transport: return "The connection to the proxy failed."
+        case .inconclusive: return "The proxy did not respond in time."
         }
     }
 }
@@ -105,9 +109,11 @@ public actor ProxyClient {
         case indeterminate
     }
 
-    public func liveness() async -> Liveness {
+    /// A short probe: the default 4s read timeout would let a single liveness check
+    /// overrun the stop deadline it is supposed to respect.
+    public func liveness(timeout: TimeInterval = 1.5) async -> Liveness {
         do {
-            _ = try await settings()
+            _ = try await get("api/settings", timeout: timeout) as ProxySettings
             return .reachable
         } catch ProxyError.unauthorized, ProxyError.decoding {
             // Both prove a server answered.
@@ -115,8 +121,10 @@ public actor ProxyClient {
         } catch ProxyError.http {
             return .reachable
         } catch ProxyError.unreachable {
+            // Connection refused: nothing is listening on the port.
             return .refused
         } catch {
+            // Timeouts, dropped sockets, and anything else: no conclusion.
             return .indeterminate
         }
     }
@@ -164,8 +172,15 @@ public actor ProxyClient {
 
     // MARK: - Transport
 
-    private func get<T: Decodable>(_ path: String, query: [URLQueryItem] = []) async throws -> T {
-        let data = try await send(method: "GET", path: path, query: query, body: nil as EmptyBody?)
+    private func get<T: Decodable>(
+        _ path: String,
+        query: [URLQueryItem] = [],
+        timeout: TimeInterval? = nil
+    ) async throws -> T {
+        let data = try await send(
+            method: "GET", path: path, query: query,
+            body: nil as EmptyBody?, timeout: timeout
+        )
         do {
             return try JSONDecoder().decode(T.self, from: data)
         } catch {
@@ -177,11 +192,12 @@ public actor ProxyClient {
         method: String,
         path: String,
         query: [URLQueryItem] = [],
-        body: Body?
+        body: Body?,
+        timeout: TimeInterval? = nil
     ) async throws -> Data {
         let keyAtStart = apiKey
         do {
-            return try await perform(method: method, path: path, query: query, body: body)
+            return try await perform(method: method, path: path, query: query, body: body, timeout: timeout)
         } catch ProxyError.unauthorized {
             // A loopback proxy needs no credential, so a 401 means this install is bound
             // to a non-loopback host.
@@ -194,7 +210,7 @@ public actor ProxyClient {
             guard let key = try await credentialForRetry(after: keyAtStart) else {
                 throw ProxyError.unauthorized
             }
-            return try await perform(method: method, path: path, query: query, body: body, key: key)
+            return try await perform(method: method, path: path, query: query, body: body, key: key, timeout: timeout)
         }
     }
 
@@ -219,7 +235,8 @@ public actor ProxyClient {
         path: String,
         query: [URLQueryItem],
         body: Body?,
-        key: String? = nil
+        key: String? = nil,
+        timeout: TimeInterval? = nil
     ) async throws -> Data {
         guard var components = URLComponents(
             url: endpoint.baseURL.appendingPathComponent(path),
@@ -230,7 +247,7 @@ public actor ProxyClient {
 
         var request = URLRequest(url: url)
         request.httpMethod = method
-        request.timeoutInterval = method == "GET" ? 4 : 6
+        request.timeoutInterval = timeout ?? (method == "GET" ? 4 : 6)
         if let credential = key ?? apiKey {
             request.setValue(credential, forHTTPHeaderField: "x-opencodex-api-key")
         }
@@ -255,9 +272,15 @@ public actor ProxyClient {
                 // Propagate cancellation rather than reporting a stopped proxy: the
                 // polling coordinator cancels in-flight work whenever the popover closes.
                 throw CancellationError()
-            case .cannotConnectToHost, .timedOut, .networkConnectionLost,
-                 .cannotFindHost, .notConnectedToInternet:
+            case .cannotConnectToHost:
+                // The one code that actually proves nothing is listening.
                 throw ProxyError.unreachable
+            case .timedOut, .networkConnectionLost, .cannotFindHost,
+                 .notConnectedToInternet, .dnsLookupFailed:
+                // A timeout or a dropped socket says the request failed, not that the
+                // server is gone. Collapsing these into `.unreachable` is what let a
+                // stop be reported as confirmed while the proxy was still running.
+                throw ProxyError.inconclusive
             default:
                 throw ProxyError.transport
             }

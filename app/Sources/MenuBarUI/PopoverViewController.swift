@@ -243,8 +243,8 @@ public final class PopoverViewController: NSViewController {
         providers.revert(name, to: enabled)
     }
 
-    public func setProviderBusy(_ name: String, _ busy: Bool) {
-        providers.setBusy(name, busy)
+    public func setProviderBusy(_ name: String, _ busy: Bool, intended: Bool? = nil) {
+        providers.setBusy(name, busy, intended: intended)
     }
 
     /// Re-measures after content changes height (disclosure, banner).
