@@ -232,7 +232,7 @@ public final class ProviderRowView: NSView {
 
 /// Read-only hooks so the UI suite can assert on rendered control state rather than on
 /// the view's private bookkeeping.
-public extension ProviderListView {
+package extension ProviderListView {
     /// Expands the list without going through a click, so tests do not depend on
     /// NSButton action dispatch.
     func expandForTesting() { setExpanded(true) }
@@ -248,7 +248,7 @@ public extension ProviderListView {
     }
 }
 
-public extension ProviderRowView {
+package extension ProviderRowView {
     var isOn: Bool { toggleState }
     var isToggleEnabled: Bool { toggleIsEnabled }
 }

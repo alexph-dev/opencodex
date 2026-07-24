@@ -158,7 +158,7 @@ public actor PollingCoordinator {
     /// Exposed so a test can wait for registration deterministically instead of sleeping
     /// and hoping the waiter task was scheduled — a fixed sleep let the continuation
     /// tests pass without ever entering this path.
-    public var waiterCount: Int { completionWaiters.count }
+    package var waiterCount: Int { completionWaiters.count }
 
     private func waitForCompletion() async {
         guard refreshInFlight || pendingOpenRefresh else { return }

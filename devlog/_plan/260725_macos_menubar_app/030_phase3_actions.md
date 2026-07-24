@@ -114,7 +114,11 @@ public func stop(startCommand: String) async -> ActionOutcome {
     var sawIndeterminate = false
     while now() < deadline {
         await sleeper(Self.pollInterval)
-        switch await client.liveness() {
+        // Cap each probe to the time left, so the last one cannot overrun the deadline
+        // by its own timeout.
+        let remaining = deadline.timeIntervalSince(now())
+        guard remaining > 0 else { break }
+        switch await client.liveness(timeout: min(1.5, remaining)) {
         case .refused:
             return restored ? .requiresManualStart(startCommand)
                             : .stoppedWithRestoreFailure(startCommand)

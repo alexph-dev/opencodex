@@ -142,7 +142,7 @@ catches the case where the archive is produced but empty.
 ```json
 "build:macos":   "bash scripts/build-macos-app.sh",
 "package:macos": "bash scripts/package-macos-release.sh",
-"test:macos":    "swift run --package-path app MenuBarCoreTests"
+"test:macos":    "swift run --package-path app MenuBarCoreTests && swift run --package-path app MenuBarUITests"
 ```
 
 ## `.github/workflows/ci.yml`
@@ -286,6 +286,8 @@ Constraints honoured:
 5. The build script runs end to end on a clean checkout under `set -euo pipefail`, with
    every variable defined before use.
 6. Workflow YAML parses; all actions SHA-pinned to a full commit SHA.
+   Note: "build clean" means exit 0, not warning-free — Command Line Tools emits
+   framework search-path warnings that come from the toolchain, not from this code.
 7. **Security review evidence recorded** before this phase closes (`MAINTAINERS.md`
    requires it for release automation): the final workflow diff reviewed, effective
    per-job permissions enumerated and confirmed least-privilege, every action pin
