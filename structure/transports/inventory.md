@@ -289,3 +289,5 @@ is left to the HTTP agent, which may pool or destroy it.
 `tests/lib/pinned-http-content-coding.test.ts` covers both routes on the same payload.
 
 Dashboard Fast-row persistence and client refresh follow the [Fast selector rows setting contract](../gui-and-management-api.md#fast-selector-rows-setting).
+
+The shared fetch executor has an HTTP-only mode for [protocol-gated HTTP recovery](streaming-health.md#protocol-gated-http-stream-recovery); pacing, dispatch overrides and credential checks still precede the physical send.

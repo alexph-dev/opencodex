@@ -209,3 +209,5 @@ Native steering generation overrides, explicit public-API eligibility and the co
 Unicode pattern normalization uses [copy-on-write traversal](../transports/byte-accounting.md#unicode-pattern-normalization) while preserving the existing schema and wire semantics.
 
 Dashboard Fast-row persistence and client refresh follow the [Fast selector rows setting contract](../gui-and-management-api.md#fast-selector-rows-setting).
+
+[Protocol-gated HTTP stream recovery](../transports/streaming-health.md#protocol-gated-http-stream-recovery) reuses the current adapter and validates the existing credential binding.

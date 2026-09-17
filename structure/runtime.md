@@ -450,3 +450,5 @@ Native steering retains fixed phase deadlines and reconciled replay output; see 
 Native steering generation overrides, explicit public-API eligibility and the consent-gated wire probe follow the [shared control contract](transports/streaming-health.md#steering-settings-public-api-and-diagnostic-probe); this owner does not change routing or execute diagnostic tools.
 
 Unicode pattern normalization uses [copy-on-write traversal](transports/byte-accounting.md#unicode-pattern-normalization) while preserving the existing schema and wire semantics.
+
+Native Responses retains physical-send credential admission during [protocol-gated HTTP recovery](transports/streaming-health.md#protocol-gated-http-stream-recovery); cancellation does not leave a replacement send running.

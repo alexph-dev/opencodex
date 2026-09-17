@@ -346,3 +346,5 @@ Native steering generation overrides, explicit public-API eligibility and the co
 Unicode pattern normalization uses [copy-on-write traversal](../transports/byte-accounting.md#unicode-pattern-normalization) while preserving the existing schema and wire semantics.
 
 Dashboard Fast-row persistence and client refresh follow the [Fast selector rows setting contract](../gui-and-management-api.md#fast-selector-rows-setting).
+
+Native Chat retains its existing terminal reset behavior; only Responses with [protocol-gated evidence](../transports/streaming-health.md#protocol-gated-http-stream-recovery) can replace a post-header HTTP stream.

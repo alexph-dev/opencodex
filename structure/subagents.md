@@ -409,3 +409,5 @@ Native steering generation overrides, explicit public-API eligibility and the co
 Startup provider-id migration preserves the account binding between configuration and OAuth credentials; see the [runtime contract](runtime.md).
 
 Dashboard Fast-row persistence and client refresh follow the [Fast selector rows setting contract](gui-and-management-api.md#fast-selector-rows-setting).
+
+A child Responses request retains its parent workflow charge during [protocol-gated HTTP recovery](transports/streaming-health.md#protocol-gated-http-stream-recovery); the replacement cannot create a new fan-out allowance.
