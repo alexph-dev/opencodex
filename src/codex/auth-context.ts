@@ -182,6 +182,31 @@ function poolStateEligible(
 }
 
 /**
+ * Does main have a live credential for a request that carries main's own bearer?
+ *
+ * The one expression final authentication and every preview must agree on, for the same reason
+ * `poolStateEligible` is: preview exists to predict the resolution, and a preview that scores main
+ * differently hands subagent fallback a different account than the one that serves (#4850).
+ *
+ * A forwardable request-owned bearer IS main's live credential -- it is exactly what would be
+ * sent if selection named main -- so the honest answer is yes, without reading the stored
+ * credential. An effective manual pin answers yes as it always did. The answer is no while the
+ * physical identity is fenced for a different reason, because retained recovery and a profile
+ * drain must keep main out of routing even for a request holding its own bearer.
+ */
+export function requestOwnedMainCredentialIsLive(inputs: {
+  preserveRequestOwnedMainPin: boolean;
+  requestScopedMainCredential: boolean;
+  nativeMainTrafficBlocked: boolean;
+  mainProfileDraining: boolean;
+}): boolean {
+  return inputs.preserveRequestOwnedMainPin
+    || (inputs.requestScopedMainCredential
+      && !inputs.nativeMainTrafficBlocked
+      && !inputs.mainProfileDraining);
+}
+
+/**
  * May this request own Pool affinity state at all?
  *
  * Two credentials authenticate outside the Pool: an exact account selector (including the
@@ -1000,6 +1025,17 @@ export async function resolveCodexAuthContext(
     || selectionAdmission?.mainProfileDraining === true;
   const nativeMainSelectionOnly = !nativeMainTrafficBlocked
     && selectionAdmission?.mainProfileDraining === true;
+  // Answering this with the manual-pin predicate made `codexAccountUnusableReason` report
+  // `main_credential_unavailable` for every UNPINNED request, so `getEligiblePoolAccounts` never
+  // listed main and the strategy compared only the stored accounts. With one stored sibling the
+  // pool degraded to "stored account until it cannot serve, then main", discarding the usage,
+  // priority and reset ordering the operator configured (#5019).
+  const requestOwnedMainCredentialLive = requestOwnedMainCredentialIsLive({
+    preserveRequestOwnedMainPin,
+    requestScopedMainCredential,
+    nativeMainTrafficBlocked,
+    mainProfileDraining: selectionAdmission?.mainProfileDraining === true,
+  });
   let accountId: string;
   const quotaScope = codexQuotaScopeForModel(options.modelId);
   try {
@@ -1042,10 +1078,11 @@ export async function resolveCodexAuthContext(
       // it. Retained recovery makes main wholly ineligible so pool routing continues.
       nativeMainSelectionOnly,
       isMainAccountTokenLive: requestScopedMainCredential
-        // Main stays excluded from this request's model roster below. This synthetic liveness is
-        // consulted only by shared-state preservation, so a caller-owned pin survives a model
-        // detour without reading or selecting the physical main credential.
-        ? () => preserveRequestOwnedMainPin
+        // Main stays excluded from this request's model roster below, so an account-gated model
+        // still cannot be served from a candidacy this answer creates. Everything else -- pool
+        // eligibility, shared-state preservation, and a caller-owned pin surviving a model detour
+        // -- is answered without reading or selecting the physical main credential.
+        ? () => requestOwnedMainCredentialLive
         : options.isMainAccountTokenLive,
       modelEligibleAccountIds,
       deniedModelAccountIds,
@@ -1098,6 +1135,16 @@ export async function resolveCodexAuthContext(
     const selected = resolution.status === "selected" ? resolution.accountId : null;
     affinityDecision = resolution.affinity;
     transientProbe = resolution.status === "selected" ? resolution.transientProbe : undefined;
+    // Main now takes part in ordering when the request carries its own main bearer (#5019), so
+    // selection can name it outright rather than only through the no-candidate fallback below.
+    // Serve that selection from the credential the request arrived with: the read fence above
+    // forbids this request from claiming, reading or reconciling the stored main profile, and a
+    // request-owned credential owns no Pool state, so there is nothing here to claim, prime or
+    // cool down. Hand back any trial first -- no Pool account is being sent to.
+    if (selected === MAIN_CODEX_ACCOUNT_ID && requestScopedMainCredential) {
+      releaseTransientProbeGrant();
+      return await resolveCallerOwnedMainContext();
+    }
     if (!selected) {
       // A retry that excluded a failed Pool account may still use the validated caller-owned
       // main credential. Treating every exclusion as if main itself had failed strands a healthy
