@@ -515,6 +515,8 @@ export async function prepareResponsesRequest(
     requestScopedMainCredential: previewRequestScopedMainCredential,
     nativeMainTrafficBlocked: nativeMainRecoveryBlocked,
     mainProfileDraining: previewSelectionAdmission?.mainProfileDraining === true,
+    // Final-auth-only, and stated rather than defaulted: see the field's own note.
+    callerOwnsCooledPoolSubscription: false,
   });
   // Deliberately NOT fenced on ownership: final auth derives `nativeMainSelectionOnly` from the
   // drain alone, and adding a term here would diverge from it in the other direction.
@@ -777,6 +779,7 @@ export async function prepareResponsesRequest(
                 requestScopedMainCredential: recoveryRequestScopedMainCredential,
                 nativeMainTrafficBlocked: recoveryNativeMainBlocked,
                 mainProfileDraining: recoverySelectionAdmission?.mainProfileDraining === true,
+                callerOwnsCooledPoolSubscription: false,
               });
               const recoverySelectionOptions = {
                 nativeMainSelectionOnly: !recoveryNativeMainBlocked

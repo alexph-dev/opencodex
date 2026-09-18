@@ -199,11 +199,22 @@ export function requestOwnedMainCredentialIsLive(inputs: {
   requestScopedMainCredential: boolean;
   nativeMainTrafficBlocked: boolean;
   mainProfileDraining: boolean;
+  /**
+   * The caller's own credential is one of the Pool subscriptions currently in cooldown.
+   *
+   * Final authentication only. Cooldown identity is not modelled by preview and never was --
+   * `callerIsCooledPoolAccount` has no other caller -- because it decides a refusal rather than
+   * which account serves, so a preview that scores main while the resolution refuses still hands
+   * subagent fallback the right account. Passed explicitly at both preview sites so the asymmetry
+   * is stated rather than inherited from a default.
+   */
+  callerOwnsCooledPoolSubscription: boolean;
 }): boolean {
   return inputs.preserveRequestOwnedMainPin
     || (inputs.requestScopedMainCredential
       && !inputs.nativeMainTrafficBlocked
-      && !inputs.mainProfileDraining);
+      && !inputs.mainProfileDraining
+      && !inputs.callerOwnsCooledPoolSubscription);
 }
 
 /**
@@ -727,6 +738,31 @@ function callerIsCooledPoolAccount(headers: Headers, config: OcxConfig, accountI
   return true;
 }
 
+/**
+ * Does the caller's own credential belong to a Pool subscription that is currently cooled?
+ *
+ * The cooldown fallback below asks this of the SELECTED account, which was sufficient while a
+ * request-owned bearer could not make main a candidate: the cooled account was the selection, so
+ * the question and the refusal sat at the same place. Once main takes part in ordering (#5019) the
+ * cooled account is no longer selected, and serving its own credential as main would resurrect the
+ * cooldown it is inside — so eligibility has to ask the same question of every cooled sibling.
+ *
+ * `callerIsCooledPoolAccount` fails closed on an unreadable caller identity, which is preserved
+ * here: an opaque bearer counts as owning any cooled subscription rather than escaping it.
+ */
+function callerOwnsAnyCooledPoolSubscription(
+  headers: Headers,
+  config: OcxConfig,
+  quotaScope: CodexQuotaScope,
+): boolean {
+  for (const account of config.codexAccounts ?? []) {
+    if (account.id === MAIN_CODEX_ACCOUNT_ID) continue;
+    if (!getCodexQuotaHealthSnapshot(account.id, quotaScope)?.cooldownUntil) continue;
+    if (callerIsCooledPoolAccount(headers, config, account.id)) return true;
+  }
+  return false;
+}
+
 function captureObservedMainWriter(): MainQuotaWriter | undefined {
   const identityKey = getObservedMainQuotaIdentityKey();
   return identityKey === undefined ? undefined : {
@@ -1025,6 +1061,8 @@ export async function resolveCodexAuthContext(
     || selectionAdmission?.mainProfileDraining === true;
   const nativeMainSelectionOnly = !nativeMainTrafficBlocked
     && selectionAdmission?.mainProfileDraining === true;
+  let accountId: string;
+  const quotaScope = codexQuotaScopeForModel(options.modelId);
   // Answering this with the manual-pin predicate made `codexAccountUnusableReason` report
   // `main_credential_unavailable` for every UNPINNED request, so `getEligiblePoolAccounts` never
   // listed main and the strategy compared only the stored accounts. With one stored sibling the
@@ -1035,9 +1073,11 @@ export async function resolveCodexAuthContext(
     requestScopedMainCredential,
     nativeMainTrafficBlocked,
     mainProfileDraining: selectionAdmission?.mainProfileDraining === true,
+    // Keeps the cooled account as the selection when the caller owns it, so the refusal is still
+    // produced by the cooldown machinery below rather than by a second rule beside it.
+    callerOwnsCooledPoolSubscription: requestScopedMainCredential
+      && callerOwnsAnyCooledPoolSubscription(headers, config, quotaScope),
   });
-  let accountId: string;
-  const quotaScope = codexQuotaScopeForModel(options.modelId);
   try {
     const excludeAccountIds = nativeMainReadsForbidden
       ? new Set([MAIN_CODEX_ACCOUNT_ID])
