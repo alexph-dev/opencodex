@@ -753,7 +753,7 @@ function callerIsCooledPoolAccount(headers: Headers, config: OcxConfig, accountI
 function callerOwnsAnyCooledPoolSubscription(
   headers: Headers,
   config: OcxConfig,
-  quotaScope: CodexQuotaScope,
+  quotaScope: CodexQuotaScope | undefined,
 ): boolean {
   for (const account of config.codexAccounts ?? []) {
     if (account.id === MAIN_CODEX_ACCOUNT_ID) continue;
