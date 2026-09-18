@@ -527,6 +527,8 @@ timing. Upstream WebSocket responses bypass this wrapper so their response-attac
 and bounded-relay identity remains intact. A downstream WebSocket turn that falls back to HTTP
 also bypasses it: `response.created` must reach that client immediately so the response id remains
 addressable and steering or injection can be rejected explicitly.
+Native Responses retains physical-send credential admission across a replacement attempt, and
+cancellation does not leave a replacement send running.
 
 `src/server/responses/passthrough-dispatch.ts` spends at most one remaining request send, preserves
 the selected credential binding, records the physical send as `connection-reset`, and forces the
