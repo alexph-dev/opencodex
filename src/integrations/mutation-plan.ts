@@ -142,6 +142,21 @@ export interface PlanFingerprintInput {
   readonly profileId?: number;
   readonly configPath: string;
   readonly detectDir: string;
+  /**
+   * What the detect directory actually was when observed, not merely where it is.
+   *
+   * Binding only the path leaves a confirmation valid across an uninstall: the contribution is
+   * unchanged, so every other component matches, while the answer to "is this client installed"
+   * has flipped. The observed kind is the input the not_installed refusal is derived from.
+   */
+  readonly installKind: string;
+  /**
+   * Whether admission policy blocks this integration, which is the non_loopback refusal's input.
+   *
+   * Config eligibility can change without touching the file, the record or the contribution, so a
+   * plan that did not bind it could be confirmed after the proxy stopped being a legal target.
+   */
+  readonly admissionBlocked: boolean;
   /** Exact current bytes, or null when the target is missing. Missing and empty are not equal. */
   readonly before: string | null;
   readonly contribution: ManagedContribution | null;
@@ -180,6 +195,8 @@ export function planFingerprint(input: PlanFingerprintInput): string {
     input.profileId === undefined ? null : input.profileId,
     input.configPath,
     input.detectDir,
+    input.installKind,
+    input.admissionBlocked,
     input.before === null ? "\u0000absent" : fingerprint(input.before),
     input.contribution === null ? null : fingerprint(canonicalContribution(input.contribution)),
     input.record === null ? null : fingerprint(JSON.stringify(input.record)),

@@ -45,6 +45,8 @@ const BASE: PlanFingerprintInput = {
   clientId: "cline",
   configPath: CONFIG_PATH,
   detectDir: "/home/example/.cline",
+  installKind: "dir",
+  admissionBlocked: false,
   before: "{}",
   contribution: CONTRIBUTION,
   record: RECORD,
@@ -118,6 +120,11 @@ describe("integration plan fingerprint", () => {
       { ...BASE, profileId: 1 },
       { ...BASE, configPath: "/home/other/.cline/config.json" },
       { ...BASE, detectDir: "/home/other/.cline" },
+      // The contribution is identical across an uninstall and across a change in admission
+      // eligibility, so binding the path alone would keep a stale confirmation valid.
+      { ...BASE, installKind: "missing" },
+      { ...BASE, installKind: "file" },
+      { ...BASE, admissionBlocked: true },
       // Different bytes, and absent distinguished from empty: restoring over a missing file and
       // over an empty one are different operations.
       { ...BASE, before: "{ }" },
