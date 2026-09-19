@@ -259,7 +259,11 @@ export async function loadExportModels(
   // Retain the FINAL projection, not an input to it. A preview that rebuilt from raw provider
   // caches would miss static and forward providers, which never populate one, and would skip the
   // retention, metadata, combo and filtering this function applies afterwards.
-  lastExportSnapshot = { key: exportSnapshotKey(config), models: Object.freeze([...exported]) };
+  lastExportSnapshot = {
+    key: exportSnapshotKey(config),
+    generation: ++exportSnapshotGeneration,
+    models: Object.freeze([...exported]),
+  };
   return exported;
 }
 
@@ -274,7 +278,23 @@ export async function loadExportModels(
  * A cold process has no snapshot, and the caller answers a bounded refusal until the ordinary
  * models path populates one. That is a real and recoverable state, unlike a read that gathers.
  */
-let lastExportSnapshot: { key: string; models: readonly ExportModel[] } | null = null;
+let lastExportSnapshot: { key: string; generation: number; models: readonly ExportModel[] } | null = null;
+let exportSnapshotGeneration = 0;
+
+/**
+ * Opaque identity of the snapshot a caller is holding, or null when there is none for this config.
+ *
+ * A fingerprint check that rebuilt its own roster could validate against one snapshot while the
+ * mutation wrote from another, because an ordinary load can replace the snapshot at any moment and
+ * nothing about that is serialised against the writer lock. Carrying this identity alongside the
+ * captured roster lets a revalidation prove the snapshot it captured is still the current one
+ * without ever swapping the roster the mutation is about to use.
+ */
+export function exportSnapshotIdentity(config: OcxConfig): string | null {
+  const snapshot = lastExportSnapshot;
+  if (snapshot === null || snapshot.key !== exportSnapshotKey(config)) return null;
+  return `${snapshot.key}:${snapshot.generation}`;
+}
 
 function exportSnapshotKey(config: OcxConfig): string {
   const providers = Object.entries(config.providers ?? {})

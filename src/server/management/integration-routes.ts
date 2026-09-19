@@ -46,7 +46,7 @@ import {
 import { jsonResponse } from "../auth-cors";
 import { readManagementJsonBody, rethrowManagementBodyTooLarge } from "./body";
 import type { ManagementContext } from "./context";
-import { loadExportModels, previewExportModels } from "./model-rows";
+import { exportSnapshotIdentity, loadExportModels, previewExportModels } from "./model-rows";
 import {
   previewIntegration,
   type IntegrationMutationPlan,
@@ -360,19 +360,27 @@ function stalePlanGuard(
   store: IntegrationStateStore,
   request: PreviewRequest,
   fingerprint: string,
+  capturedIdentity: string | null,
 ): {
   revalidate: NonNullable<CoordinatedIntegrationOptions["revalidate"]>;
   response: () => Response | null;
 } {
   let stale: IntegrationMutationPlan | "unavailable" | null = null;
   return {
-    revalidate: async () => {
-      const input = await buildIntegrationPreviewInput(clientId, ctx, store);
-      if (!input) {
-        stale = "unavailable";
-        return { ok: false, reason: "conflict", state: "conflict", clientId, message: "no model roster is cached" };
+    revalidate: async frozen => {
+      /*
+       * Plan the coordinator's OWN frozen input, never a freshly built one. Rebuilding here let
+       * the check validate against one roster while the mutation wrote from another, because an
+       * ordinary load can replace the snapshot at any time and nothing serialises that against
+       * this lock. The captured identity is verified separately, so a replacement is detected
+       * without ever swapping the roster this mutation is about to use.
+       */
+      if (exportSnapshotIdentity(ctx.config) !== capturedIdentity) {
+        const refreshed = await buildIntegrationPreviewInput(clientId, ctx, store);
+        stale = refreshed === null ? "unavailable" : previewIntegration(refreshed, request);
+        return { ok: false, reason: "conflict", state: "conflict", clientId, message: "the model roster changed while confirming" };
       }
-      const plan = previewIntegration(input, request);
+      const plan = previewIntegration(frozen, request);
       if (plan.canApply && plan.fingerprint === fingerprint) return null;
       stale = plan;
       return { ok: false, reason: "conflict", state: plan.state, clientId, message: "that confirmation no longer describes this file" };
@@ -815,9 +823,10 @@ export async function handleIntegrationRoutes(ctx: ManagementContext): Promise<R
         operation.clientId,
         ctx,
         store,
-        { operation: "restore", opId, confirmDrift },
-        restoreBinding.fingerprint,
-      );
+      { operation: "restore", opId, confirmDrift },
+      restoreBinding.fingerprint,
+        exportSnapshotIdentity(ctx.config),
+    );
       const restoreInput: IntegrationRestoreInput = {
         ...writeInput,
         opId,
@@ -942,6 +951,7 @@ export async function handleIntegrationRoutes(ctx: ManagementContext): Promise<R
       integrationStore(),
       { operation: binding.operation },
       binding.fingerprint,
+      exportSnapshotIdentity(ctx.config),
     );
     const result = await runIntegrationMutationFlight(
       requestedClient,
