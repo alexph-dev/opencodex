@@ -178,6 +178,18 @@ export function isModelCacheGenerationCurrent(provider: string, generation: stri
 }
 
 /**
+ * The same stamp, read without creating one.
+ *
+ * {@link captureModelCacheGeneration} seeds an entry for a provider it has not seen, which is
+ * correct for a discovery about to run and wrong for a caller that must observe and change
+ * nothing. A reader gets the absent case as `0` rather than a newly created entry, so observing a
+ * provider cannot itself alter what a later capture returns.
+ */
+export function observeModelCacheGeneration(provider: string): string {
+  return `${globalCacheGeneration}:${providerCacheGenerations.get(provider) ?? 0}`;
+}
+
+/**
  * Store a live result unless the cache was cleared while that asynchronous discovery was running.
  * The optional generation keeps existing direct cache writers unchanged while discovery callers can
  * prevent a previous OAuth account from repopulating the current account's cache.

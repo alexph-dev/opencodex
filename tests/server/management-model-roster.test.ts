@@ -7,6 +7,7 @@ import {
 } from "../../src/server/management/model-rows";
 import type { CatalogModel } from "../../src/codex/catalog";
 import type { OcxConfig } from "../../src/types";
+import { providerCacheGenerations } from "../../src/codex/model-cache";
 
 /**
  * A read-only caller has to be able to see what a writer would write without performing the
@@ -71,6 +72,17 @@ describe("a preview reads only a roster an authoritative load already finished",
 
     const added = { ...CONFIG, customModels: [{ id: "c1", provider: "supplied", modelId: "extra" }] } as OcxConfig;
     expect(previewExportModels(added)).toBeNull();
+  });
+
+  test("a completed discovery retires the snapshot even though the config never changed", async () => {
+    resetExportSnapshotForTests();
+    await loadExportModels(CONFIG, SUPPLIED);
+    expect(previewExportModels(CONFIG)).not.toBeNull();
+
+    // The config key cannot see this: the same configuration now resolves to different models,
+    // which is exactly what discovery does and exactly what a plan must not ignore.
+    providerCacheGenerations.set("supplied", (providerCacheGenerations.get("supplied") ?? 0) + 1);
+    expect(previewExportModels(CONFIG)).toBeNull();
   });
 
   test("the snapshot does not share objects with the caller that produced it", async () => {

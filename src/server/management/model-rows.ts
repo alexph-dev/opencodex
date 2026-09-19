@@ -10,6 +10,7 @@
  */
 import type { CatalogModel } from "../../codex/catalog";
 import { createHash } from "node:crypto";
+import { observeModelCacheGeneration } from "../../codex/model-cache";
 import {
   catalogModelSlug,
   filterCatalogVisibleModels,
@@ -264,6 +265,7 @@ export async function loadExportModels(
   // later preview plans against, and the fingerprint would have moved with it.
   lastExportSnapshot = {
     key: exportSnapshotKey(config),
+    cacheStamp: modelCacheStamp(config),
     generation: ++exportSnapshotGeneration,
     models: Object.freeze(structuredClone(exported)),
   };
@@ -283,8 +285,25 @@ export async function loadExportModels(
  * `loadExportModels`, so the page an operator must open before confirming anything is the page
  * that populates this.
  */
-let lastExportSnapshot: { key: string; generation: number; models: readonly ExportModel[] } | null = null;
+let lastExportSnapshot:
+  | { key: string; cacheStamp: string; generation: number; models: readonly ExportModel[] }
+  | null = null;
 let exportSnapshotGeneration = 0;
+
+/**
+ * Where the gathered half of the roster stands, observed without changing it.
+ *
+ * The config key cannot see a provider's models changing underneath an unchanged configuration,
+ * which is exactly what discovery does. This reads the cache's own generation for each configured
+ * provider through the passive observer, so a completed discovery retires the snapshot and a
+ * preview stops planning against a roster that no longer reflects the provider.
+ */
+function modelCacheStamp(config: OcxConfig): string {
+  return Object.keys(config.providers ?? {})
+    .sort()
+    .map(provider => `${provider}=${observeModelCacheGeneration(provider)}`)
+    .join(",");
+}
 
 /**
  * Opaque identity of the snapshot a caller is holding, or null when there is none for this config.
@@ -297,7 +316,9 @@ let exportSnapshotGeneration = 0;
  */
 export function exportSnapshotIdentity(config: OcxConfig): string | null {
   const snapshot = lastExportSnapshot;
-  if (snapshot === null || snapshot.key !== exportSnapshotKey(config)) return null;
+  if (snapshot === null) return null;
+  if (snapshot.key !== exportSnapshotKey(config)) return null;
+  if (snapshot.cacheStamp !== modelCacheStamp(config)) return null;
   return `${snapshot.key}:${snapshot.generation}`;
 }
 
@@ -336,7 +357,11 @@ export function previewExportSnapshot(
   // concurrent load publish a new snapshot between them, so a caller could hold one roster while
   // believing it held the identity of another.
   const snapshot = lastExportSnapshot;
-  if (snapshot === null || snapshot.key !== exportSnapshotKey(config)) return null;
+  if (snapshot === null) return null;
+  if (snapshot.key !== exportSnapshotKey(config)) return null;
+  // A completed discovery retires the snapshot: the configuration is unchanged, but the models it
+  // resolves to are not the ones this roster was built from.
+  if (snapshot.cacheStamp !== modelCacheStamp(config)) return null;
   // Cloned on the way out as well as on the way in. The retained copy is the authority, and a
   // reader holding its objects could edit the roster every later preview plans against without
   // going anywhere near this module.
