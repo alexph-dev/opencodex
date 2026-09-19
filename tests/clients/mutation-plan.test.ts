@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+  MANAGED_PATH_TEMPLATES,
   PLAN_CHANGE_LIMIT,
   canonicalSchemaPath,
   orderPlanChanges,
@@ -7,7 +8,7 @@ import {
   type IntegrationPlanChange,
   type PlanFingerprintInput,
 } from "../../src/integrations/mutation-plan";
-import type { ManagedContribution } from "../../src/clients/config-export";
+import { EXPORT_CLIENTS, type ManagedContribution } from "../../src/clients/config-export";
 import type { OwnershipRecord } from "../../src/integrations/ownership";
 import type { JournalEntry } from "../../src/integrations/journal";
 
@@ -64,18 +65,35 @@ const RESTORE: NonNullable<PlanFingerprintInput["restore"]> = {
 const RESTORE_BASE: PlanFingerprintInput = { ...BASE, operation: "restore", restore: RESTORE };
 
 describe("integration mutation plan projection", () => {
-  test("a managed path keeps plain keys and collapses a selected member", () => {
-    expect(canonicalSchemaPath(["providers", "opencodex", "baseUrl"])).toBe("providers.opencodex.baseUrl");
-    // Which entry was selected is runtime identity, so the selector becomes a wildcard.
-    expect(canonicalSchemaPath(["providers", "[name=opencodex]", "baseUrl"])).toBe("providers.*.baseUrl");
+  test("a declared managed path is published as its template", () => {
+    expect(canonicalSchemaPath("cline", ["settings", "providers", "opencodex"])).toBe("settings.providers.opencodex");
+    expect(canonicalSchemaPath("raycast", ["providers", "[id=opencodex]"])).toBe("providers.[id=opencodex]");
   });
 
-  test("a segment that is not representable invalidates the whole path", () => {
-    // An ownership record accepts arbitrary strings, so a path is never trusted because a record
-    // carries it. Dropping only the bad segment would name a different place than the real one.
-    expect(canonicalSchemaPath(["providers", "../../etc/passwd"])).toBeNull();
-    expect(canonicalSchemaPath(["providers", "a key with spaces"])).toBeNull();
-    expect(canonicalSchemaPath([])).toBeNull();
+  test("a dynamic position never publishes the member it selected", () => {
+    // Kimi writes one fragment per model, so this position holds a user's model alias. An
+    // alphanumeric allowlist would have emitted it verbatim.
+    const path = canonicalSchemaPath("kimi", ["models", "kimi-k2-private-alias"]);
+    expect(path).toBe("models.*");
+    expect(path).not.toContain("kimi-k2-private-alias");
+  });
+
+  test("a path outside the client's declared grammar is refused, not described", () => {
+    // An ownership record accepts arbitrary strings, so a path is never published because a record
+    // carries it. Depth, a foreign static segment and another client's shape all fail closed.
+    expect(canonicalSchemaPath("kimi", ["models", "alias", "contextWindow"])).toBeNull();
+    expect(canonicalSchemaPath("pi", ["providers", "someone-elses-provider"])).toBeNull();
+    expect(canonicalSchemaPath("pi", ["settings", "providers", "opencodex"])).toBeNull();
+    expect(canonicalSchemaPath("cline", ["..", "..", "etc"])).toBeNull();
+    expect(canonicalSchemaPath("cline", [])).toBeNull();
+  });
+
+  test("every shipped client declares where its managed fragments live", () => {
+    for (const clientId of Object.keys(EXPORT_CLIENTS)) {
+      const templates = MANAGED_PATH_TEMPLATES[clientId as keyof typeof MANAGED_PATH_TEMPLATES];
+      expect(templates, clientId).toBeDefined();
+      expect(templates.length, clientId).toBeGreaterThan(0);
+    }
   });
 
   test("changes are deduplicated and ordered by kind then path", () => {

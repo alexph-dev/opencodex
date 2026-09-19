@@ -16,6 +16,7 @@
 import { createHash } from "node:crypto";
 import { canonicalContribution, fingerprint, type OwnershipRecord } from "./ownership";
 import { ClientPathError, EXPORT_CLIENTS, type ExportModel, type ManagedContribution } from "../clients/config-export";
+import { OPENCODE_PROVIDER_ID } from "../clients/config-export/constants";
 import { createClineIO, ClineTransactionError } from "./cline-io";
 import { parseClineDocument } from "./cline-document";
 import { PARSE_FAILED, defaultIntegrationIO, loadTarget, parseConfig, type IntegrationIO } from "./config-io";
@@ -75,34 +76,72 @@ export interface IntegrationMutationPlan {
   readonly profileId?: number;
 }
 
-const PLAIN_KEY = /^[A-Za-z0-9_-]+$/;
-const SELECTOR_HINT = /[[\]=]/;
+/** A position whose observed value is never published, only its presence. */
+export const DYNAMIC_SEGMENT = "*";
 
 /**
- * One path segment as it may be published.
+ * Where each client's managed fragments live, declared rather than inferred.
  *
- * A plain key is structural and safe to name. Anything carrying selector syntax identifies a
- * member chosen at runtime, so it collapses to a wildcard: which entry was selected is exactly the
- * kind of identity this response does not publish. Anything else is not representable, and an
- * unrepresentable segment invalidates the whole path rather than being silently skipped, because
- * skipping it would produce a path that names a different place than the one being changed.
+ * A general "looks like a plain key" rule is not good enough, and Kimi is the proof: it writes one
+ * fragment per model at `models.<alias>`, so an alphanumeric allowlist would publish a user's
+ * model identifier verbatim. The same rule would accept any plain path sitting in an ownership
+ * record, and a record on disk is not a validation authority.
+ *
+ * So a path is published only when it matches one of these templates exactly. Static segments must
+ * match literally, a DYNAMIC_SEGMENT position accepts any observed segment, and the string that
+ * leaves this module is the TEMPLATE rather than the observed path. That is what makes publishing
+ * a value structurally impossible instead of merely unlikely.
+ *
+ * The satisfies clause makes a new client a type error here, so nobody can add one whose managed
+ * paths silently have no declaration.
  */
-function canonicalSegment(segment: string): string | null {
-  if (PLAIN_KEY.test(segment)) return segment;
-  if (SELECTOR_HINT.test(segment)) return "*";
-  return null;
+const CLIENT_MANAGED_PATHS = {
+  opencode: [["provider", OPENCODE_PROVIDER_ID], ["providers", OPENCODE_PROVIDER_ID]],
+  pi: [["providers", OPENCODE_PROVIDER_ID]],
+  omp: [["providers", OPENCODE_PROVIDER_ID]],
+  hermes: [["providers", OPENCODE_PROVIDER_ID]],
+  openclaw: [["models", "providers", OPENCODE_PROVIDER_ID]],
+  kimi: [["providers", OPENCODE_PROVIDER_ID], ["models", DYNAMIC_SEGMENT]],
+  gajae: [["providers", OPENCODE_PROVIDER_ID]],
+  dsh: [["llm-pi-ai", "providers", OPENCODE_PROVIDER_ID]],
+  mcode: [["custom_provider", OPENCODE_PROVIDER_ID]],
+  zcode: [["provider", OPENCODE_PROVIDER_ID]],
+  prime: [["providers", OPENCODE_PROVIDER_ID]],
+  aside: [["providers", OPENCODE_PROVIDER_ID]],
+  raycast: [["providers", `[id=${OPENCODE_PROVIDER_ID}]`]],
+  omo: [["providers", OPENCODE_PROVIDER_ID]],
+  cline: [
+    ["settings", "providers", OPENCODE_PROVIDER_ID],
+    ["catalog", "providers", OPENCODE_PROVIDER_ID],
+  ],
+} satisfies Record<IntegrationClientId, readonly (readonly string[])[]>;
+
+/** Not a configuration surface. Exported so a parity case can compare it against the shipped clients. */
+export const MANAGED_PATH_TEMPLATES: Readonly<Record<IntegrationClientId, readonly (readonly string[])[]>> = CLIENT_MANAGED_PATHS;
+
+function matchesTemplate(template: readonly string[], path: readonly string[]): boolean {
+  if (template.length !== path.length) return false;
+  return template.every((segment, index) => {
+    const observed = path[index];
+    if (observed === undefined || observed.length === 0) return false;
+    return segment === DYNAMIC_SEGMENT || segment === observed;
+  });
 }
 
-/** A managed schema path, or null when any segment is not representable. */
-export function canonicalSchemaPath(path: readonly string[]): string | null {
+/**
+ * The managed schema path this change touches, or null when the path is outside the client's
+ * declared grammar.
+ *
+ * Null is not an error to work around. A path nobody declared is either a record written by a
+ * different version or something arbitrary, and neither is safe to name, so the caller reports the
+ * fixed ownership pseudo-path or a refusal instead of inventing a description.
+ */
+export function canonicalSchemaPath(clientId: IntegrationClientId, path: readonly string[]): string | null {
   if (path.length === 0) return null;
-  const segments: string[] = [];
-  for (const segment of path) {
-    const canonical = canonicalSegment(segment);
-    if (canonical === null) return null;
-    segments.push(canonical);
+  for (const template of CLIENT_MANAGED_PATHS[clientId]) {
+    if (matchesTemplate(template, path)) return template.join(".");
   }
-  return segments.join(".");
+  return null;
 }
 
 const KIND_ORDER: readonly IntegrationPlanChangeKind[] = ["add", "replace", "remove", "snapshot", "ownership", "journal"];
