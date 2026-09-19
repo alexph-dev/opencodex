@@ -22,6 +22,7 @@ import {
   type ManagedContribution,
 } from "../../src/clients/config-export";
 import type { OwnershipRecord } from "../../src/integrations/ownership";
+import { fingerprint } from "../../src/integrations/ownership";
 import type { JournalEntry } from "../../src/integrations/journal";
 import type { OcxConfig } from "../../src/types";
 import { createIntegrationStateStore } from "../../src/integrations/store";
@@ -420,6 +421,71 @@ describe("integration preview writes nothing", () => {
       expect(plan.version).toBe(1);
       expect(treeSnapshot(home)).toEqual(homeBefore);
       expect(treeSnapshot(storeRoot)).toEqual(storeBefore);
+    } finally {
+      removeTreeWithRetry(home);
+      removeTreeWithRetry(storeRoot);
+    }
+  });
+});
+
+describe("planning an undo reads the writer's specification", () => {
+  function seedRestore(home: string, storeRoot: string, targetText: string, recordedPath?: string) {
+    const store = createIntegrationStateStore(storeRoot);
+    const env = {} as NodeJS.ProcessEnv;
+    const { configPath, detectDir } = resolveIntegrationPaths("opencode", env, home);
+    expect(configPath.startsWith(home), configPath).toBe(true);
+    mkdirSync(detectDir, { recursive: true });
+    mkdirSync(dirname(configPath), { recursive: true });
+    writeFileSync(configPath, targetText);
+    const opId = "op-seeded";
+    const snapshot = store.captureSnapshot("opencode", opId, "{}\n");
+    store.appendJournal({
+      opId,
+      clientId: "opencode",
+      kind: "apply",
+      at: "2026-01-01T00:00:00.000Z",
+      configPath: recordedPath ?? configPath,
+      snapshot,
+      resultFingerprint: fingerprint(targetText),
+      resultAbsent: false,
+      priorRecord: null,
+    } satisfies JournalEntry);
+    return { store, env, opId };
+  }
+
+  test("a target that cannot be parsed is exactly the one worth restoring", () => {
+    const home = mkdtempSync(join(tmpdir(), "ocx-restore-parse-"));
+    const storeRoot = mkdtempSync(join(tmpdir(), "ocx-restore-parse-store-"));
+    try {
+      // The writer's undo reads bytes and never parses, so refusing here would deny an operator
+      // the backup at the moment the file is in the state that most needs one.
+      const { store, env, opId } = seedRestore(home, storeRoot, "{ this is not valid json");
+      const plan = previewIntegration(
+        { clientId: "opencode", models: FIXTURE_MODELS, config: FIXTURE_CONFIG, port: 10100, env, home, store },
+        { operation: "restore", opId },
+      );
+      expect(plan.refusalReason).toBeUndefined();
+      expect(plan.canApply).toBe(true);
+    } finally {
+      removeTreeWithRetry(home);
+      removeTreeWithRetry(storeRoot);
+    }
+  });
+
+  test("a row recorded against another location is refused rather than planned", () => {
+    const home = mkdtempSync(join(tmpdir(), "ocx-restore-path-"));
+    const storeRoot = mkdtempSync(join(tmpdir(), "ocx-restore-path-store-"));
+    try {
+      // Path equality is the single thing the writer's undo exists to enforce: a row recorded for
+      // one home must never rewrite a file in another.
+      const { store, env, opId } = seedRestore(home, storeRoot, "{}\n", join(home, "elsewhere", "opencode.json"));
+      const plan = previewIntegration(
+        { clientId: "opencode", models: FIXTURE_MODELS, config: FIXTURE_CONFIG, port: 10100, env, home, store },
+        { operation: "restore", opId },
+      );
+      expect(plan.canApply).toBe(false);
+      expect(plan.refusalReason).toBe("conflict");
+      expect(plan.changes).toEqual([]);
     } finally {
       removeTreeWithRetry(home);
       removeTreeWithRetry(storeRoot);

@@ -368,7 +368,7 @@ function changesOf(input: PlanInput): readonly IntegrationPlanChange[] {
       changes.push({ kind: occupied ? "replace" : "add", path });
     }
   }
-  if (input.operation === "disable" || input.operation === "restore") {
+  if (input.operation === "disable") {
     for (const owned of input.record?.fragmentPaths ?? []) {
       const path = canonicalSchemaPath(input.clientId, owned);
       if (path === null) continue;
@@ -376,6 +376,8 @@ function changesOf(input: PlanInput): readonly IntegrationPlanChange[] {
     }
   }
   if (input.operation === "restore") {
+    // Provenance is restored, never re-derived, so the places an undo touches are the ones the
+    // row recorded as ours before that operation ran, not whatever a record says today.
     for (const fragment of input.restore?.entry.priorRecord?.fragmentPaths ?? []) {
       const path = canonicalSchemaPath(input.clientId, fragment);
       if (path === null) continue;
@@ -442,6 +444,73 @@ function unboundPlan(
   });
 }
 
+/**
+ * Restore reads a different specification, so it gets its own observation.
+ *
+ * The writer's undo path never parses and never classifies: it compares the resolved config path
+ * against the one the journal row was recorded for, reads the snapshot, and reads the target's
+ * BYTES. Routing a preview through the general observation therefore refused an undo of a file
+ * that was readable but unparseable, which is the state that most needs restoring, and accepted a
+ * row recorded against a previous home, which is the single case path equality exists to refuse.
+ */
+export function observeRestore(input: IntegrationWriteInput, opId: string, effects: ObservationEffects) {
+  const store = input.store ?? createIntegrationStateStore();
+  let io = input.io ?? defaultIntegrationIO(store);
+  const clientId = input.clientId;
+  let resolved: { configPath: string; detectDir: string };
+  try {
+    resolved = input.resolvedPaths ?? resolveIntegrationPaths(clientId, input.env, input.home);
+  } catch (error) {
+    if (!(error instanceof ClientPathError)) throw error;
+    return { failed: observationFailure("unsafe", "unsafe", error.message) } as const;
+  }
+  // Coordinated restore refuses this before it looks at the row at all: an undo will not create
+  // the client's home, so a writer-lock client without one has nothing to restore into.
+  if (INTEGRATION_CLIENTS[clientId].writerLock && io.statKind(resolved.detectDir) !== "dir") {
+    return {
+      failed: observationFailure("unsafe", "unsafe", "the client home is missing; restore will not create it"),
+    } as const;
+  }
+  const entry = store.findOperation(opId);
+  if (!entry || entry.clientId !== clientId) {
+    return { failed: observationFailure("unsafe", "unsafe", "that operation cannot be undone") } as const;
+  }
+  const configPath = entry.configPath;
+  // An undo acts on the path the operation was journaled against. A row recorded for one home must
+  // never be allowed to rewrite a file in another.
+  if (resolved.configPath !== configPath) {
+    return {
+      failed: observationFailure("conflict", "conflict", "that operation was recorded for a different location"),
+    } as const;
+  }
+  if (clientId === "cline") {
+    try { io = createClineIO(io, configPath, store, effects.recover); }
+    catch (error) {
+      if (!(error instanceof ClineTransactionError)) throw error;
+      return { failed: { ...observationFailure("unsafe", "unsafe", error.message, error.snapshotPath), residual: true } } as const;
+    }
+  }
+  const snapshot = store.readSnapshot(entry);
+  const target = loadTarget(io, configPath);
+  if (!target.ok) {
+    return { failed: observationFailure("unsafe", "unsafe", "the target cannot be read safely") } as const;
+  }
+  const before = target.before;
+  return {
+    failed: undefined,
+    clientId,
+    configPath,
+    detectDir: resolved.detectDir,
+    installKind: io.statKind(resolved.detectDir),
+    entry,
+    snapshotKind: snapshot.kind,
+    snapshotText: snapshot.kind === "stored" ? snapshot.text : null,
+    before,
+    // Bytes only. Parsing here is exactly what must not happen.
+    driftsFromResult: !matchesOperationResult(entry, before),
+  } as const;
+}
+
 export interface PreviewRequest {
   readonly operation: IntegrationPlanOperation;
   /** Required for restore; names the journalled operation being undone. */
@@ -458,6 +527,9 @@ export interface PreviewRequest {
  * file, the ownership records, and for restore the journal row and its snapshot.
  */
 export function previewIntegration(input: IntegrationWriteInput, request: PreviewRequest): IntegrationMutationPlan {
+  // Restore never reaches the general observation, because the writer's undo path never parses
+  // or classifies and a preview that did would answer a different question.
+  if (request.operation === "restore") return previewRestore(input, request);
   const observed = observeIntegration(input, { maintenance: false, recover: false });
   if (observed.failed) return unboundPlan(input.clientId, request.operation, observed.failed, request.profileId);
 
@@ -478,26 +550,51 @@ export function previewIntegration(input: IntegrationWriteInput, request: Previe
     ...(request.profileId === undefined ? {} : { profileId: request.profileId }),
   };
 
-  if (request.operation !== "restore") return buildMutationPlan(shared);
+  return buildMutationPlan(shared);
+}
 
-  const entry = request.opId === undefined ? null : observed.store.findOperation(request.opId);
-  if (!entry || entry.clientId !== observed.clientId) {
-    // Naming which of the two it was would report on journal contents the caller did not select.
-    return unboundPlan(observed.clientId, "restore", {
-      reason: "unsafe", state: observed.classified.state, message: "that operation cannot be undone",
-    }, request.profileId);
-  }
-  const snapshot = observed.store.readSnapshot(entry);
+/**
+ * Plan an undo the way the writer performs one.
+ *
+ * State is derived from bytes alone: a missing target is absent, a target that no longer matches
+ * the row's recorded result is a conflict, and anything else is current. Admission is not asked
+ * about, because restore emits nothing an admission policy could object to and the writer does not
+ * ask either.
+ */
+function previewRestore(input: IntegrationWriteInput, request: PreviewRequest): IntegrationMutationPlan {
+  const refusal = (message: string): IntegrationMutationPlan =>
+    unboundPlan(input.clientId, "restore", { reason: "unsafe", state: "unsafe", message }, request.profileId);
+  if (request.opId === undefined) return refusal("that operation cannot be undone");
+
+  const observed = observeRestore(input, request.opId, { maintenance: false, recover: false });
+  if (observed.failed) return unboundPlan(input.clientId, "restore", observed.failed, request.profileId);
+
+  const state: IntegrationState = observed.before === null
+    ? "absent"
+    : observed.driftsFromResult ? "conflict" : "current";
+
   return buildMutationPlan({
-    ...shared,
+    operation: "restore",
+    clientId: observed.clientId,
+    configPath: observed.configPath,
+    detectDir: observed.detectDir,
+    installKind: observed.installKind,
+    admissionBlocked: false,
+    before: observed.before,
+    contribution: null,
+    record: null,
+    models: input.models,
+    classified: { state },
+    parsed: undefined,
     restore: {
-      opId: entry.opId,
-      entry,
-      snapshotKind: snapshot.kind,
-      snapshotText: snapshot.kind === "stored" ? snapshot.text : null,
+      opId: observed.entry.opId,
+      entry: observed.entry,
+      snapshotKind: observed.snapshotKind,
+      snapshotText: observed.snapshotText,
       confirmDrift: request.confirmDrift === true,
-      driftsFromResult: !matchesOperationResult(entry, observed.before),
+      driftsFromResult: observed.driftsFromResult,
     },
+    ...(request.profileId === undefined ? {} : { profileId: request.profileId }),
   });
 }
 
