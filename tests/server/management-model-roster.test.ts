@@ -72,4 +72,17 @@ describe("a preview reads only a roster an authoritative load already finished",
     const added = { ...CONFIG, customModels: [{ id: "c1", provider: "supplied", modelId: "extra" }] } as OcxConfig;
     expect(previewExportModels(added)).toBeNull();
   });
+
+  test("the snapshot does not share objects with the caller that produced it", async () => {
+    resetExportSnapshotForTests();
+    const exported = await loadExportModels(CONFIG, SUPPLIED);
+    const first = exported[0];
+    expect(first).toBeDefined();
+
+    // Freezing only the array left the models themselves shared, so a caller editing one in place
+    // would have rewritten what a later preview plans against, and moved the fingerprint with it.
+    if (first) first.id = "mutated-by-the-caller";
+    const snapshot = previewExportModels(CONFIG);
+    expect(snapshot?.some(model => model.id === "mutated-by-the-caller")).toBe(false);
+  });
 });

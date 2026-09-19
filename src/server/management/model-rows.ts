@@ -259,10 +259,13 @@ export async function loadExportModels(
   // Retain the FINAL projection, not an input to it. A preview that rebuilt from raw provider
   // caches would miss static and forward providers, which never populate one, and would skip the
   // retention, metadata, combo and filtering this function applies afterwards.
+  // A deep clone, not a frozen view of the caller's array. Freezing the array alone left the model
+  // objects shared, so a caller mutating one in place would have silently rewritten the roster a
+  // later preview plans against, and the fingerprint would have moved with it.
   lastExportSnapshot = {
     key: exportSnapshotKey(config),
     generation: ++exportSnapshotGeneration,
-    models: Object.freeze([...exported]),
+    models: Object.freeze(structuredClone(exported)),
   };
   return exported;
 }
@@ -275,8 +278,10 @@ export async function loadExportModels(
  * them retires the snapshot rather than letting a preview plan against a roster the user no longer
  * has. Credentials are not part of it and are never read here.
  *
- * A cold process has no snapshot, and the caller answers a bounded refusal until the ordinary
- * models path populates one. That is a real and recoverable state, unlike a read that gathers.
+ * A cold process has no snapshot and the caller answers a bounded refusal. Recovery is the
+ * ordinary flow rather than a special step: the Integrations collection read calls
+ * `loadExportModels`, so the page an operator must open before confirming anything is the page
+ * that populates this.
  */
 let lastExportSnapshot: { key: string; generation: number; models: readonly ExportModel[] } | null = null;
 let exportSnapshotGeneration = 0;
