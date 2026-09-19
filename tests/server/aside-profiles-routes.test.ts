@@ -13,6 +13,7 @@ import type { OcxConfig } from "../../src/types";
 import { catalogConvergenceFactory } from "../helpers/catalog-convergence";
 import { installIsolatedCodexHome, type IsolatedCodexHome } from "../helpers/isolated-codex-home";
 import { removeTreeWithRetry } from "../helpers/remove-tree";
+import { loadExportModels, resetExportSnapshotForTests } from "../../src/server/management/model-rows";
 
 let root: string;
 let home: string;
@@ -57,6 +58,12 @@ afterEach(() => {
 });
 
 function path(id: number): string { return join(home, ".aside", "u", String(id), "models.json"); }
+
+/** A preview only answers from a roster an authoritative load already finished. */
+async function seedRoster(): Promise<void> {
+  resetExportSnapshotForTests();
+  await loadExportModels(config, []);
+}
 function document(id: number) { return JSON.parse(readFileSync(path(id), "utf8")); }
 async function api(pathname: string, method = "GET", body?: unknown) {
   return rawApi(pathname, method, body === undefined ? undefined : JSON.stringify(body));
@@ -194,6 +201,60 @@ test("profile history and Undo cannot recreate an undone enable on the next sync
   await api("/api/selected-models", "PUT", { provider: "fixture", models: ["one"] });
   expect(document(2).providers.opencodex).toBeUndefined();
   expect(document(0).providers.opencodex).toBeUndefined();
+});
+
+test("profile zero can be planned; it is a real profile, not an absent one", async () => {
+  await seedRoster();
+  const response = await api("/api/client-integrations/aside/profiles/0/preview", "POST", { operation: "apply" });
+  expect(response.status).toBe(200);
+  const plan = await response.json() as { canApply: boolean; profileId?: number; fingerprint: string };
+  expect(plan.canApply).toBe(true);
+  expect(plan.profileId).toBe(0);
+  // A plan names places, never the profile's location.
+  expect(JSON.stringify(plan)).not.toContain(home);
+});
+
+test("a previewed profile change commits once and then reports itself stale", async () => {
+  await seedRoster();
+  const preview = await api("/api/client-integrations/aside/profiles/1/preview", "POST", { operation: "apply" });
+  expect(preview.status).toBe(200);
+  const plan = await preview.json() as { canApply: boolean; fingerprint: string };
+  expect(plan.canApply).toBe(true);
+
+  const commit = await api("/api/client-integrations/aside/profiles/1", "PUT", {
+    enabled: true, operation: "apply", planFingerprint: plan.fingerprint,
+  });
+  expect(commit.status).toBe(200);
+  expect(document(1).providers.opencodex).toBeDefined();
+  const committed = readFileSync(path(1), "utf8");
+
+  // Replaying the same confirmation describes a profile that is no longer in that state. Without
+  // a real comparison this would apply a second time.
+  const replay = await api("/api/client-integrations/aside/profiles/1", "PUT", {
+    enabled: true, operation: "apply", planFingerprint: plan.fingerprint,
+  });
+  expect(replay.status).toBe(409);
+  expect((await replay.json() as { code: string }).code).toBe("integration_preview_stale");
+  expect(readFileSync(path(1), "utf8")).toBe(committed);
+  // The refusal must not touch a sibling profile either.
+  expect(document(2).providers.opencodex).toBeUndefined();
+});
+
+test("a stale profile confirmation is refused before the preference is written", async () => {
+  await seedRoster();
+  const preview = await api("/api/client-integrations/aside/profiles/2/preview", "POST", { operation: "apply" });
+  const plan = await preview.json() as { fingerprint: string };
+  const before = readFileSync(path(2), "utf8");
+
+  const response = await api("/api/client-integrations/aside/profiles/2", "PUT", {
+    enabled: true, operation: "apply", planFingerprint: `${plan.fingerprint}-not-current`,
+  });
+  expect(response.status).toBe(409);
+  expect((await response.json() as { code: string }).code).toBe("integration_preview_stale");
+  expect(readFileSync(path(2), "utf8")).toBe(before);
+  // Aside persists its preference before any writer runs, so a check that fired later would have
+  // saved this already.
+  expect(saved).toBeUndefined();
 });
 
 test.each(["../0", "01", "-1", "9007199254740992"])("rejects invalid profile %s before file mutation", async id => {
