@@ -259,10 +259,14 @@ async function buildIntegrationPreviewInput(
   clientId: IntegrationClientId,
   ctx: ManagementContext,
   store: IntegrationStateStore,
-): Promise<IntegrationWriteInput> {
+): Promise<IntegrationWriteInput | null> {
+  const models = await previewExportModels(ctx.config);
+  // No cached roster means no honest snapshot to plan against. Gathering one here would make a
+  // read refresh credentials and write the provider cache, which is the thing preview must not do.
+  if (models === null) return null;
   return {
     clientId,
-    models: await previewExportModels(ctx.config),
+    models,
     config: ctx.config,
     port: Number(ctx.url.port) || ctx.config.port,
     store,
@@ -294,6 +298,20 @@ function invalidClientResponse(ctx: ManagementContext): Response {
     code: "invalid_integration_client",
     validClients: INTEGRATION_CLIENT_IDS,
   }, 400, ctx.req, ctx.config);
+}
+
+/**
+ * No cached model roster, so there is nothing honest to plan against.
+ *
+ * Answered as a bounded refusal rather than by gathering one: discovery refreshes credentials and
+ * writes the provider cache, and a preview that did either would be a write wearing a read's name.
+ * The caller opens the models view or performs the mutation directly.
+ */
+function previewUnavailableResponse(ctx: ManagementContext): Response {
+  return jsonResponse({
+    error: "no model roster is cached yet, so this change cannot be planned",
+    code: "integration_preview_unavailable",
+  }, 409, ctx.req, ctx.config);
 }
 
 function internalErrorResponse(error: unknown, ctx: ManagementContext): Response {
@@ -611,6 +629,7 @@ export async function handleIntegrationRoutes(ctx: ManagementContext): Promise<R
     }
     try {
       const input = await buildIntegrationPreviewInput(previewClient as IntegrationClientId, ctx, integrationStore());
+      if (!input) return previewUnavailableResponse(ctx);
       return jsonResponse(previewIntegration(input, { operation }), 200, req, ctx.config);
     } catch (error) {
       return internalErrorResponse(error, ctx);
@@ -644,6 +663,7 @@ export async function handleIntegrationRoutes(ctx: ManagementContext): Promise<R
         }, 404, req, ctx.config);
       }
       const input = await buildIntegrationPreviewInput(operation.clientId, ctx, store);
+      if (!input) return previewUnavailableResponse(ctx);
       const plan = previewIntegration(input, {
         operation: "restore",
         opId,

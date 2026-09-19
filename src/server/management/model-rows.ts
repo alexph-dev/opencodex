@@ -258,20 +258,28 @@ export async function loadExportModels(
 }
 
 /**
- * The export roster for a read that must not change anything.
+ * The export roster for a read that must change nothing at all, or null when there is not one.
  *
- * `fetchAllModels` is discovery plus the initial-selection finalizer, and that finalizer reaches
- * `mutatePersistedConfig`. Writing the user's configuration because somebody opened a dialog is
- * not acceptable, so this gathers directly and skips the finalizer. It also skips the entitlement
- * freshness wait, which exists to make a picker current and has no business blocking a read for
- * three seconds.
+ * Skipping the initial-selection finalizer was not enough. Discovery itself refreshes credentials
+ * and writes the provider model cache, so a preview that gathered would still be a write dressed
+ * as a read, and "the models list already does this" describes what a GET happens to do rather
+ * than what a preview is allowed to do.
  *
- * Discovery itself still runs, through the same TTL-cached path the models list already uses on
- * every Integrations page load, so this is not a new class of work on a read — only the writing
- * part is removed. The roster is fingerprinted into the plan, so a commit that would be built
- * from a different one is refused rather than silently applied.
+ * So this reads already-captured per-provider cache entries and never fetches. When no provider
+ * has a cached roster there is no honest snapshot to plan against, and the caller reports a
+ * bounded refusal rather than triggering a gather to manufacture one.
  */
-export async function previewExportModels(config: OcxConfig): Promise<ExportModel[]> {
-  const { gatherRoutedModels } = await import("../../codex/catalog");
-  return loadExportModels(config, await gatherRoutedModels(config));
+export async function previewExportModels(config: OcxConfig): Promise<ExportModel[] | null> {
+  const { getFreshCached, getStaleCached, DEFAULT_MODEL_CACHE_TTL_MS } = await import("../../codex/model-cache");
+  const providers = Object.keys(config.providers ?? {});
+  const cached: CatalogModel[] = [];
+  let anyCache = false;
+  for (const provider of providers) {
+    const rows = getFreshCached(provider, DEFAULT_MODEL_CACHE_TTL_MS) ?? getStaleCached(provider);
+    if (rows === null) continue;
+    anyCache = true;
+    cached.push(...rows);
+  }
+  if (!anyCache && providers.length > 0) return null;
+  return loadExportModels(config, cached);
 }

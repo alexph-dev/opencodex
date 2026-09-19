@@ -1222,27 +1222,18 @@ describe("admission", () => {
 });
 
 describe("integration previews are reads", () => {
-  test("planning an apply reports what it would change and changes nothing", async () => {
+  test("planning without a cached roster refuses rather than gathering one", async () => {
     const configPath = installHermes();
     const before = existsSync(configPath) ? readFileSync(configPath, "utf8") : null;
 
     const response = await previewApi("/api/client-integrations/preview", { clientId: "hermes", operation: "apply" });
-    expect(response.status).toBe(200);
-    const plan = await response.json() as {
-      version: number;
-      canApply: boolean;
-      willChange: boolean;
-      changes: { kind: string; path: string }[];
-      fingerprint: string;
-    };
-
-    expect(plan.version).toBe(1);
-    expect(plan.canApply).toBe(true);
-    expect(plan.willChange).toBe(true);
-    expect(plan.changes.some(change => change.kind === "journal")).toBe(true);
-    expect(plan.fingerprint.length).toBeGreaterThan(0);
-    // A plan names places, never locations or contents.
-    expect(JSON.stringify(plan)).not.toContain(home);
+    // Discovery refreshes credentials and writes the provider cache, so a preview may not perform
+    // one to manufacture a roster. With nothing cached there is no honest snapshot to plan
+    // against, and saying so is the correct answer.
+    expect(response.status).toBe(409);
+    const body = await response.json() as { code: string };
+    expect(body.code).toBe("integration_preview_unavailable");
+    expect(JSON.stringify(body)).not.toContain(home);
 
     const after = existsSync(configPath) ? readFileSync(configPath, "utf8") : null;
     expect(after).toBe(before);
