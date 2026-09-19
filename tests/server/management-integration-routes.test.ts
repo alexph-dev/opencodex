@@ -141,6 +141,14 @@ function hermesConfigPath(): string {
   return INTEGRATION_CLIENTS.hermes.configPath(routeEnv, home);
 }
 
+async function previewApi(path: string, body: unknown): Promise<Response> {
+  return api(path, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
 async function rawApi(path: string, init: RequestInit = {}): Promise<Response | null> {
   const url = new URL(`http://127.0.0.1:10100${path}`);
   return handleManagementAPI(
@@ -1210,5 +1218,49 @@ describe("admission", () => {
       else process.env.OPENCODEX_HOME = previousOpencodexHome;
       if (previousAdmin !== undefined) process.env.OPENCODEX_ADMIN_AUTH_TOKEN = previousAdmin;
     }
+  });
+});
+
+describe("integration previews are reads", () => {
+  test("planning an apply reports what it would change and changes nothing", async () => {
+    const configPath = installHermes();
+    const before = existsSync(configPath) ? readFileSync(configPath, "utf8") : null;
+
+    const response = await previewApi("/api/client-integrations/preview", { clientId: "hermes", operation: "apply" });
+    expect(response.status).toBe(200);
+    const plan = await response.json() as {
+      version: number;
+      canApply: boolean;
+      willChange: boolean;
+      changes: { kind: string; path: string }[];
+      fingerprint: string;
+    };
+
+    expect(plan.version).toBe(1);
+    expect(plan.canApply).toBe(true);
+    expect(plan.willChange).toBe(true);
+    expect(plan.changes.some(change => change.kind === "journal")).toBe(true);
+    expect(plan.fingerprint.length).toBeGreaterThan(0);
+    // A plan names places, never locations or contents.
+    expect(JSON.stringify(plan)).not.toContain(home);
+
+    const after = existsSync(configPath) ? readFileSync(configPath, "utf8") : null;
+    expect(after).toBe(before);
+  });
+
+  test("a plan is refused before any planning when the request does not name a real operation", async () => {
+    const badOperation = await previewApi("/api/client-integrations/preview", { clientId: "hermes", operation: "launch" });
+    expect(badOperation.status).toBe(400);
+    expect((await badOperation.json() as { code: string }).code).toBe("invalid_preview_operation");
+
+    const badClient = await previewApi("/api/client-integrations/preview", { clientId: "not-a-client", operation: "apply" });
+    expect(badClient.status).toBeGreaterThanOrEqual(400);
+  });
+
+  test("planning an undo for an operation that is not there declines to read the journal back", async () => {
+    const response = await previewApi("/api/client-integrations/restore/preview", { opId: "no-such-operation" });
+    expect(response.status).toBe(404);
+    const body = await response.json() as { code: string };
+    expect(body.code).toBe("integration_operation_not_found");
   });
 });
