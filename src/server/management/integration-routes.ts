@@ -266,7 +266,7 @@ async function buildIntegrationPreviewInput(
   ctx: ManagementContext,
   store: IntegrationStateStore,
 ): Promise<IntegrationWriteInput | null> {
-  const models = await previewExportModels(ctx.config);
+  const models = previewExportModels(ctx.config);
   // No cached roster means no honest snapshot to plan against. Gathering one here would make a
   // read refresh credentials and write the provider cache, which is the thing preview must not do.
   if (models === null) return null;

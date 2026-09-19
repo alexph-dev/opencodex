@@ -1,5 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { listManagementModelRows, loadExportModels } from "../../src/server/management/model-rows";
+import {
+  listManagementModelRows,
+  loadExportModels,
+  previewExportModels,
+  resetExportSnapshotForTests,
+} from "../../src/server/management/model-rows";
 import type { CatalogModel } from "../../src/codex/catalog";
 import type { OcxConfig } from "../../src/types";
 
@@ -39,5 +44,32 @@ describe("a supplied roster replaces the gather and keeps the projection", () =>
     // Visibility and provider selection decide which rows survive here, so this asserts the call
     // completes through the same path rather than pinning that policy from outside.
     await expect(loadExportModels(CONFIG, SUPPLIED)).resolves.toBeInstanceOf(Array);
+  });
+});
+
+describe("a preview reads only a roster an authoritative load already finished", () => {
+  test("a cold process has none, and an ordinary load leaves the final projection behind", async () => {
+    resetExportSnapshotForTests();
+    // Recoverable rather than broken: the operator opens the models view and the snapshot appears.
+    expect(previewExportModels(CONFIG)).toBeNull();
+
+    const exported = await loadExportModels(CONFIG, SUPPLIED);
+    // The FINAL projection, not an input to it: rebuilding from raw provider caches would miss
+    // static and forward providers and skip the filtering this applies afterwards.
+    expect(previewExportModels(CONFIG)).toEqual(exported);
+  });
+
+  test("changing what the roster depends on retires the snapshot", async () => {
+    resetExportSnapshotForTests();
+    await loadExportModels(CONFIG, SUPPLIED);
+    expect(previewExportModels(CONFIG)).not.toBeNull();
+
+    // A blocklist edit changes which models a client would be given, so a plan built against the
+    // old roster no longer describes what the user has.
+    const blocked = { ...CONFIG, disabledModels: ["supplied/supplied-model"] } as OcxConfig;
+    expect(previewExportModels(blocked)).toBeNull();
+
+    const added = { ...CONFIG, customModels: [{ id: "c1", provider: "supplied", modelId: "extra" }] } as OcxConfig;
+    expect(previewExportModels(added)).toBeNull();
   });
 });

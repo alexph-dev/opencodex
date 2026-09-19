@@ -9,6 +9,7 @@
  * Bodies are unchanged from their previous home; only `export` was added.
  */
 import type { CatalogModel } from "../../codex/catalog";
+import { createHash } from "node:crypto";
 import {
   catalogModelSlug,
   filterCatalogVisibleModels,
@@ -254,7 +255,41 @@ export async function loadExportModels(
   // Management deliberately lists the full roster so hidden models can be enabled.
   // A client picker must also honor the provider selection, not just its blocklist.
   const visibleRouted = new Set(filterCatalogVisibleModels(rows.filter(row => !row.native), config));
-  return rows.filter(row => !row.disabled && (row.native || visibleRouted.has(row))).map(toExportModel);
+  const exported = rows.filter(row => !row.disabled && (row.native || visibleRouted.has(row))).map(toExportModel);
+  // Retain the FINAL projection, not an input to it. A preview that rebuilt from raw provider
+  // caches would miss static and forward providers, which never populate one, and would skip the
+  // retention, metadata, combo and filtering this function applies afterwards.
+  lastExportSnapshot = { key: exportSnapshotKey(config), models: Object.freeze([...exported]) };
+  return exported;
+}
+
+/**
+ * The completed export roster from the last ordinary load, if it still describes this config.
+ *
+ * A preview may not gather, so it reads only what an authoritative load already finished. The key
+ * is a digest over the provider graph's shape, the blocklist and custom models, so changing any of
+ * them retires the snapshot rather than letting a preview plan against a roster the user no longer
+ * has. Credentials are not part of it and are never read here.
+ *
+ * A cold process has no snapshot, and the caller answers a bounded refusal until the ordinary
+ * models path populates one. That is a real and recoverable state, unlike a read that gathers.
+ */
+let lastExportSnapshot: { key: string; models: readonly ExportModel[] } | null = null;
+
+function exportSnapshotKey(config: OcxConfig): string {
+  const providers = Object.entries(config.providers ?? {})
+    .map(([name, provider]) => [name, provider.adapter, provider.baseUrl, provider.models ?? null])
+    .sort((left, right) => String(left[0]) < String(right[0]) ? -1 : 1);
+  return createHash("sha256").update(JSON.stringify({
+    providers,
+    disabled: config.disabledModels ?? [],
+    custom: config.customModels ?? [],
+  })).digest("hex").slice(0, 32);
+}
+
+/** Test seam: a fresh process has no snapshot, and suites must be able to reproduce that. */
+export function resetExportSnapshotForTests(): void {
+  lastExportSnapshot = null;
 }
 
 /**
@@ -269,17 +304,8 @@ export async function loadExportModels(
  * has a cached roster there is no honest snapshot to plan against, and the caller reports a
  * bounded refusal rather than triggering a gather to manufacture one.
  */
-export async function previewExportModels(config: OcxConfig): Promise<ExportModel[] | null> {
-  const { getFreshCached, getStaleCached, DEFAULT_MODEL_CACHE_TTL_MS } = await import("../../codex/model-cache");
-  const providers = Object.keys(config.providers ?? {});
-  const cached: CatalogModel[] = [];
-  let anyCache = false;
-  for (const provider of providers) {
-    const rows = getFreshCached(provider, DEFAULT_MODEL_CACHE_TTL_MS) ?? getStaleCached(provider);
-    if (rows === null) continue;
-    anyCache = true;
-    cached.push(...rows);
-  }
-  if (!anyCache && providers.length > 0) return null;
-  return loadExportModels(config, cached);
+export function previewExportModels(config: OcxConfig): readonly ExportModel[] | null {
+  const snapshot = lastExportSnapshot;
+  if (snapshot === null || snapshot.key !== exportSnapshotKey(config)) return null;
+  return snapshot.models;
 }
