@@ -12,9 +12,43 @@ import {
   asideRootStore, createAsideProfileContext, persistAsidePolicy, runAsideProfileAction, selectAsideProfiles,
   type AsideProfileContext, type AsideProfilesInput, type AsideProfileWriteOutcome,
 } from "./aside-profile-context";
+import { AsideProfileError as AsideProfileErrorClass } from "./aside-profile-context";
+import {
+  previewIntegration,
+  type IntegrationMutationPlan,
+  type IntegrationPlanOperation,
+} from "./mutation-plan";
 
 export { AsideProfileError } from "./aside-profile-context";
 export type { AsideProfilesInput, AsideProfileWriteOutcome } from "./aside-profile-context";
+
+/**
+ * Plan one profile's change without performing it.
+ *
+ * A profile is the unit here because a fingerprint can only honestly describe one independently
+ * changing file. The scope this builds is the same scope the mutation will use — that profile's
+ * store, IO and resolved path pair — so the plan describes the thing that would actually happen
+ * rather than an approximation of it.
+ *
+ * The roster comes from whatever the caller injected, so a preview inherits the caller's no-gather
+ * guarantee instead of reaching for a second source of models.
+ */
+export async function previewAsideProfile(
+  input: AsideProfilesInput,
+  request: { profileId: number; operation: IntegrationPlanOperation; opId?: string; confirmDrift?: boolean },
+): Promise<IntegrationMutationPlan> {
+  const ctx = createAsideProfileContext(input);
+  const profile = selectAsideProfiles(ctx, request.profileId)[0];
+  if (!profile) throw new AsideProfileErrorClass("aside_profile_not_found", 404, "That Aside profile is not available");
+  const scope = asideProfileScope(ctx, profile);
+  const bound = await asideWriteInput(ctx, scope);
+  return previewIntegration(bound, {
+    operation: request.operation,
+    profileId: request.profileId,
+    ...(request.opId === undefined ? {} : { opId: request.opId }),
+    ...(request.confirmDrift === undefined ? {} : { confirmDrift: request.confirmDrift }),
+  });
+}
 
 export interface AsideProfileState extends IntegrationStatus {
   profileId: number;
