@@ -329,6 +329,30 @@ describe("integration mutation plan", () => {
     expect(drifted.foreignEdit).toBe("drift");
     expect(buildMutationPlan({ ...plan, restore: { ...RESTORE, driftsFromResult: true, confirmDrift: true } }).canApply).toBe(true);
   });
+
+  test("a file that was recorded and is now gone has drifted, it is not simply absent", () => {
+    // Calling it absent would describe a missing file as an ordinary undo, while the writer
+    // refuses it pending confirmation. Absence is only honest when the row recorded absence too.
+    const vanished = buildMutationPlan({
+      ...RESTORE_BASE,
+      classified: { state: "conflict" },
+      parsed: {},
+      before: null,
+      restore: { ...RESTORE, driftsFromResult: true },
+    });
+    expect(vanished.state).toBe("conflict");
+    expect(vanished.refusalReason).toBe("drift_requires_confirm");
+
+    const recordedAbsent = buildMutationPlan({
+      ...RESTORE_BASE,
+      classified: { state: "absent" },
+      parsed: {},
+      before: null,
+      restore: { ...RESTORE, driftsFromResult: false },
+    });
+    expect(recordedAbsent.state).toBe("absent");
+    expect(recordedAbsent.canApply).toBe(true);
+  });
 });
 
 /** Every file under a directory with its bytes, so "nothing changed" is a comparison and not a claim. */

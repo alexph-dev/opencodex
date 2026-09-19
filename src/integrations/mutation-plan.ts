@@ -491,6 +491,14 @@ export function observeRestore(input: IntegrationWriteInput, opId: string, effec
     }
   }
   const snapshot = store.readSnapshot(entry);
+  /*
+   * Expiry is decided before the target is read, exactly as the writer decides it. Reading first
+   * let an expired backup over an unreadable file report the file as the problem, when the answer
+   * the operator needs is that the backup is gone.
+   */
+  if (snapshot.kind === "expired") {
+    return { failed: observationFailure("snapshot_expired", "absent", "that backup has expired") } as const;
+  }
   const target = loadTarget(io, configPath);
   if (!target.ok) {
     return { failed: observationFailure("unsafe", "unsafe", "the target cannot be read safely") } as const;
@@ -569,9 +577,14 @@ function previewRestore(input: IntegrationWriteInput, request: PreviewRequest): 
   const observed = observeRestore(input, request.opId, { maintenance: false, recover: false });
   if (observed.failed) return unboundPlan(input.clientId, "restore", observed.failed, request.profileId);
 
-  const state: IntegrationState = observed.before === null
-    ? "absent"
-    : observed.driftsFromResult ? "conflict" : "current";
+  /*
+   * Drift decides first. A row that recorded a file and now finds none has drifted, and calling
+   * that absent would report a missing file as an ordinary undo while the writer refuses it
+   * pending confirmation. Absent is only honest when the recorded result was absence too.
+   */
+  const state: IntegrationState = observed.driftsFromResult
+    ? "conflict"
+    : observed.before === null ? "absent" : "current";
 
   return buildMutationPlan({
     operation: "restore",
