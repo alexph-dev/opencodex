@@ -916,7 +916,16 @@ export async function handleIntegrationRoutes(ctx: ManagementContext): Promise<R
   }
 
   try {
-    const input = await buildIntegrationWriteInput(requestedClient, ctx, integrationStore());
+    /*
+     * A bound request is built from the same passive roster the guard re-plans against, and an
+     * unbound one keeps its existing refreshing path. Building the refreshing input first would
+     * have had the mutation and its own confirmation check disagree about the roster by
+     * construction, which is the disagreement this binding exists to detect.
+     */
+    const input = binding === "none"
+      ? await buildIntegrationWriteInput(requestedClient, ctx, integrationStore())
+      : await buildIntegrationPreviewInput(requestedClient, ctx, integrationStore());
+    if (!input) return previewUnavailableResponse(ctx);
     const guard = binding === "none" ? null : stalePlanGuard(
       requestedClient,
       ctx,

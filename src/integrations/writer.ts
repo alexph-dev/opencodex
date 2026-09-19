@@ -795,7 +795,11 @@ export async function restoreIntegrationCoordinated(
   if (!prepared.ok) return prepared.refusal;
   const frozen = prepared.value;
   const spec = INTEGRATION_CLIENTS[frozen.clientId];
-  if (!spec.writerLock) return restoreIntegration({ ...frozen, opId: input.opId, confirmDrift: input.confirmDrift });
+  const run = () => restoreIntegration({ ...frozen, opId: input.opId, confirmDrift: input.confirmDrift });
+  if (!spec.writerLock) {
+    const refused = await options?.revalidate?.(frozen);
+    return refused ?? run();
+  }
   if (frozen.io.statKind(frozen.resolvedPaths.detectDir) !== "dir") {
     return refuse(
       frozen.clientId,
@@ -806,7 +810,12 @@ export async function restoreIntegrationCoordinated(
   }
   return withIntegrationWriterLock(
     frozen.resolvedPaths.configPath,
-    async () => restoreIntegration({ ...frozen, opId: input.opId, confirmDrift: input.confirmDrift }),
+    async () => {
+      // An undo is bound like any other confirmation, and this is the only place where that check
+      // happens with the lock held and before the snapshot, the write and the journal row.
+      const refused = await options?.revalidate?.(frozen);
+      return refused ?? run();
+    },
     options?.lockSeams,
     spec.writerLock.suffix,
   );
