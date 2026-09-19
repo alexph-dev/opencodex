@@ -1307,6 +1307,37 @@ describe("integration previews are reads", () => {
     expect(existsSync(configPath) ? readFileSync(configPath, "utf8") : null).toBe(before);
   });
 
+  test("a previewed undo commits with its binding", async () => {
+    const configPath = installHermes();
+    resetExportSnapshotForTests();
+    await loadExportModels(config, []);
+
+    const applied = await api("/api/client-integrations/hermes", {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ enabled: true }),
+    });
+    expect(applied.status).toBe(200);
+    const afterApply = readFileSync(configPath, "utf8");
+
+    const opId = store.listOperations("hermes")[0]?.opId;
+    expect(opId).toBeDefined();
+
+    const preview = await previewApi("/api/client-integrations/restore/preview", { opId });
+    expect(preview.status).toBe(200);
+    const plan = await preview.json() as { canApply: boolean; fingerprint: string };
+    expect(plan.canApply).toBe(true);
+
+    // The binding has to carry a bound undo all the way through, not just refuse a bad one.
+    const undo = await api("/api/client-integrations/restore", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ opId, operation: "restore", planFingerprint: plan.fingerprint }),
+    });
+    expect(undo.status).toBe(200);
+    expect(readFileSync(configPath, "utf8")).not.toBe(afterApply);
+  });
+
   test("a plan is refused before any planning when the request does not name a real operation", async () => {
     const badOperation = await previewApi("/api/client-integrations/preview", { clientId: "hermes", operation: "launch" });
     expect(badOperation.status).toBe(400);
