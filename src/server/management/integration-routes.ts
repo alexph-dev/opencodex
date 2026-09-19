@@ -777,7 +777,14 @@ export async function handleIntegrationRoutes(ctx: ManagementContext): Promise<R
         code: "invalid_preview_operation",
       }, 400, req, ctx.config);
     }
-    const asideRestore = await asideRestoreResponse(ctx, { opId, confirmDrift }, profileOptions);
+    // The binding travels with the request. Dropping it here routed a bound Aside restore into
+    // the unbound path, which executed the mutation while its confirmation went unexamined.
+    const asideRestore = await asideRestoreResponse(ctx, {
+      opId,
+      confirmDrift,
+      ...(parsed.operation === undefined ? {} : { operation: parsed.operation }),
+      ...(parsed.planFingerprint === undefined ? {} : { planFingerprint: parsed.planFingerprint }),
+    }, profileOptions);
     if (asideRestore) return asideRestore;
     let restoreClientId: IntegrationClientId | undefined;
     try {
@@ -800,7 +807,10 @@ export async function handleIntegrationRoutes(ctx: ManagementContext): Promise<R
         }, 410, req, ctx.config);
       }
 
-      const writeInput = await buildIntegrationWriteInput(operation.clientId, ctx, store);
+      const writeInput = restoreBinding === "none"
+        ? await buildIntegrationWriteInput(operation.clientId, ctx, store)
+        : await buildIntegrationPreviewInput(operation.clientId, ctx, store);
+      if (!writeInput) return previewUnavailableResponse(ctx);
       const restoreGuard = restoreBinding === "none" ? null : stalePlanGuard(
         operation.clientId,
         ctx,

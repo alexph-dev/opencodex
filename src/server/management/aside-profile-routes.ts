@@ -30,7 +30,10 @@ class ProfileQueryError extends Error { readonly status = 400; readonly code = "
  * profile-scoped plan owner these routes need does not exist yet, so a bound request is refused
  * outright until it does. Unbound callers, which is every caller today, are unaffected.
  */
-function rejectUnsupportedBinding(body: Record<string, unknown>, expected: string): void {
+function rejectUnsupportedBinding(
+  body: { operation?: unknown; planFingerprint?: unknown },
+  expected: string,
+): void {
   const { operation, planFingerprint } = body;
   if (operation === undefined && planFingerprint === undefined) return;
   if (operation === undefined || typeof planFingerprint !== "string" || planFingerprint.length === 0) {
@@ -204,7 +207,9 @@ export async function asideJournalResponse(
 }
 
 export async function asideRestoreResponse(
-  ctx: ManagementContext, body: { opId: string; confirmDrift?: boolean }, options: AsideProfileRouteOptions,
+  ctx: ManagementContext,
+  body: { opId: string; confirmDrift?: boolean; operation?: unknown; planFingerprint?: unknown },
+  options: AsideProfileRouteOptions,
 ): Promise<Response | null> {
   try {
     validateClientSelector(ctx);

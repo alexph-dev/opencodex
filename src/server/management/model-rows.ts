@@ -278,7 +278,7 @@ let lastExportSnapshot: { key: string; models: readonly ExportModel[] } | null =
 
 function exportSnapshotKey(config: OcxConfig): string {
   const providers = Object.entries(config.providers ?? {})
-    .map(([name, provider]) => [name, provider.adapter, provider.baseUrl, provider.models ?? null])
+    .map(([name, provider]) => [name, provider.adapter, provider.baseUrl])
     .sort((left, right) => String(left[0]) < String(right[0]) ? -1 : 1);
   return createHash("sha256").update(JSON.stringify({
     providers,
