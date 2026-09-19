@@ -7,7 +7,7 @@ import {
 } from "../../src/server/management/model-rows";
 import type { CatalogModel } from "../../src/codex/catalog";
 import type { OcxConfig } from "../../src/types";
-import { providerCacheGenerations } from "../../src/codex/model-cache";
+import { setCached } from "../../src/codex/model-cache";
 
 /**
  * A read-only caller has to be able to see what a writer would write without performing the
@@ -79,9 +79,9 @@ describe("a preview reads only a roster an authoritative load already finished",
     await loadExportModels(CONFIG, SUPPLIED);
     expect(previewExportModels(CONFIG)).not.toBeNull();
 
-    // The config key cannot see this: the same configuration now resolves to different models,
-    // which is exactly what discovery does and exactly what a plan must not ignore.
-    providerCacheGenerations.set("supplied", (providerCacheGenerations.get("supplied") ?? 0) + 1);
+    // The real trigger: a discovery that succeeded and published different rows. The config key
+    // cannot see it, and an authority generation does not move for it either.
+    expect(setCached("supplied", [{ id: "discovered-later", provider: "supplied" }])).toBe(true);
     expect(previewExportModels(CONFIG)).toBeNull();
   });
 

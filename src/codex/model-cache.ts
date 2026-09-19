@@ -71,6 +71,8 @@ function deleteCachedProvider(provider: string): number {
   cache.delete(provider);
   cacheBytes = Math.max(0, cacheBytes - entry.sizeBytes);
   if (oldestCachedProvider === provider) recomputeOldestCachedProvider();
+  // A removal changes this provider's content as surely as a publication does.
+  bumpProviderCacheRevision(provider);
   return entry.sizeBytes;
 }
 
@@ -178,15 +180,26 @@ export function isModelCacheGenerationCurrent(provider: string, generation: stri
 }
 
 /**
- * The same stamp, read without creating one.
+ * How many times this provider's cached content has actually changed.
  *
- * {@link captureModelCacheGeneration} seeds an entry for a provider it has not seen, which is
- * correct for a discovery about to run and wrong for a caller that must observe and change
- * nothing. A reader gets the absent case as `0` rather than a newly created entry, so observing a
- * provider cannot itself alter what a later capture returns.
+ * Deliberately separate from the generation. A generation revokes an in-flight discovery's right
+ * to publish, so it advances on an authority clear and must not be repurposed: moving it on a
+ * successful publication would cancel writes that are still legitimate. This counts accepted
+ * publications and removals instead, which is what a reader holding a derived roster needs to
+ * know, and it advances on exactly the event a generation does not: a discovery that succeeded
+ * and changed the rows.
+ *
+ * Reading is passive. An unseen provider reads as `0` rather than seeding an entry, so observing
+ * one cannot alter what a later capture or publication sees.
  */
-export function observeModelCacheGeneration(provider: string): string {
-  return `${globalCacheGeneration}:${providerCacheGenerations.get(provider) ?? 0}`;
+const providerCacheRevisions = new Map<string, number>();
+
+function bumpProviderCacheRevision(provider: string): void {
+  providerCacheRevisions.set(provider, (providerCacheRevisions.get(provider) ?? 0) + 1);
+}
+
+export function observeModelCacheRevision(provider: string): string {
+  return `${providerCacheRevisions.get(provider) ?? 0}`;
 }
 
 /**
@@ -212,6 +225,8 @@ export function setCached(
     oldestCachedAt = now;
   }
   enforceAppOwnedMemoryBudget();
+  // Published and accepted, so anything derived from this provider's rows is now out of date.
+  bumpProviderCacheRevision(provider);
   return true;
 }
 

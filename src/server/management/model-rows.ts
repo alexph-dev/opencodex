@@ -10,7 +10,7 @@
  */
 import type { CatalogModel } from "../../codex/catalog";
 import { createHash } from "node:crypto";
-import { observeModelCacheGeneration } from "../../codex/model-cache";
+import { observeModelCacheRevision } from "../../codex/model-cache";
 import {
   catalogModelSlug,
   filterCatalogVisibleModels,
@@ -301,7 +301,7 @@ let exportSnapshotGeneration = 0;
 function modelCacheStamp(config: OcxConfig): string {
   return Object.keys(config.providers ?? {})
     .sort()
-    .map(provider => `${provider}=${observeModelCacheGeneration(provider)}`)
+    .map(provider => `${provider}=${observeModelCacheRevision(provider)}`)
     .join(",");
 }
 
