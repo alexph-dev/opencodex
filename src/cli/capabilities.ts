@@ -315,6 +315,18 @@ export const CAPABILITIES: readonly Capability[] = [
     ],
   },
   {
+    command: ["companion"],
+    summary: "Inspect and configure menu-bar and widget companion usage settings.",
+    routes: [
+      { method: "GET", path: "/api/companion/settings" },
+      { method: "GET", path: "/api/usage/timeline" },
+      { method: "PUT", path: "/api/companion/settings" },
+    ],
+    flags: [{ name: "--json", value: "boolean", summary: "Emit companion settings as JSON." }],
+    mutates: true,
+    json: "payload",
+  },
+  {
     command: ["account", "history"],
     summary: "Cached quota observations for one stored Codex pool account.",
     routes: [{ method: "GET", path: "/api/codex-auth/quota/history" }],

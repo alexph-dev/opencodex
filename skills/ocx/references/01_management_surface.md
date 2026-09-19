@@ -537,6 +537,22 @@ JSON mode: `payload`.
 - `store` verifies every keychain write by read-back before config.json is rewritten with keychain: references; an unavailable keychain refuses with 503 and leaves the file untouched.
 - Headless services usually have no unlocked keychain session; prefer ${ENV_VAR} references there.
 
+### `ocx companion`
+
+Inspect and configure menu-bar and widget companion usage settings.
+
+| Method | Route |
+|---|---|
+| GET | `/api/companion/settings` |
+| GET | `/api/usage/timeline` |
+| PUT | `/api/companion/settings` |
+
+| Flag | Value | Meaning |
+|---|---|---|
+| `--json` | boolean | Emit companion settings as JSON. |
+
+JSON mode: `payload`.
+
 ### `ocx account main reauth`
 
 Reauthenticate the native main Codex login with a device code (#3898); headless hubs need no Codex App or keyring.
@@ -896,6 +912,6 @@ JSON mode: `payload`.
 
 ## Counts
 
-- declared capabilities: 48
-- of those, state-changing: 24
+- declared capabilities: 49
+- of those, state-changing: 25
 - head-resolved invocations: 2

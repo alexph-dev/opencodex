@@ -50,6 +50,7 @@
       "scope": "Product boundary, local state ownership, and the non-negotiable invariants index.",
       "documents": [
         "gui/",
+        "src/companion/",
         "scripts/",
         "src/config.ts",
         "src/lib/"
@@ -326,6 +327,7 @@
       "scope": "Dashboard serving, authentication boundaries, /api/* ownership, and usage accounting.",
       "documents": [
         "gui/",
+        "src/companion/",
         "src/codex/",
         "src/lib/",
         "src/server/",

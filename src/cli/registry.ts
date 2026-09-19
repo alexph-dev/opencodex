@@ -299,6 +299,11 @@ export const CLI_COMMANDS: CliCommandEntry[] = [
     summary: "Alias of ocx models.",
   },
   {
+    name: "companion",
+    usage: "ocx companion [--json]",
+    summary: "Inspect menu-bar and widget companion usage settings.",
+  },
+  {
     name: "combo",
     usage: "ocx combo <list|show|set|remove> ...",
     summary: "Manage combo virtual models and routing strategies.",
