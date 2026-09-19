@@ -20,11 +20,12 @@ import { OPENCODE_PROVIDER_ID } from "../clients/config-export/constants";
 import { createClineIO, ClineTransactionError } from "./cline-io";
 import { parseClineDocument } from "./cline-document";
 import { PARSE_FAILED, defaultIntegrationIO, loadTarget, parseConfig, type IntegrationIO } from "./config-io";
-import { INTEGRATION_CLIENTS, resolveIntegrationPaths, type IntegrationClientId } from "./registry";
+import { INTEGRATION_CLIENTS, isLoopbackOnly, resolveIntegrationPaths, type IntegrationClientId } from "./registry";
+import { shouldInjectApiAuthHeader } from "../codex/inject";
 import { classifyIntegration, exportContextOf, type IntegrationState, type StateReason } from "./state";
 import { createIntegrationStateStore, type IntegrationStateStore } from "./store";
 import type { OcxConfig } from "../types";
-import type { JournalEntry } from "./journal";
+import { matchesOperationResult, type JournalEntry } from "./journal";
 
 /**
  * Why a mutation refused. Declared here rather than in the writer so the planner can report a
@@ -354,6 +355,93 @@ export function buildMutationPlan(input: PlanInput): IntegrationMutationPlan {
     canApply: refusalReason === undefined,
     ...(refusalReason === undefined ? {} : { refusalReason }),
     ...(input.profileId === undefined ? {} : { profileId: input.profileId }),
+  });
+}
+
+/**
+ * The token a plan carries when observation itself refused.
+ *
+ * Such a plan never read the state it would have bound, so there is nothing to bind. It is safe
+ * for every one of them to share this value because `canApply` is false, and a mutation may only
+ * be bound to a plan that could apply.
+ */
+export const PLAN_UNBOUND_FINGERPRINT = `${PLAN_FINGERPRINT_VERSION}:unbound`;
+
+function unboundPlan(
+  clientId: IntegrationClientId,
+  operation: IntegrationPlanOperation,
+  failure: IntegrationObservationFailure,
+  profileId?: number,
+): IntegrationMutationPlan {
+  return Object.freeze({
+    version: 1 as const,
+    clientId,
+    operation,
+    state: failure.state,
+    foreignEdit: "none" as const,
+    changes: Object.freeze([]),
+    fingerprint: PLAN_UNBOUND_FINGERPRINT,
+    canApply: false,
+    refusalReason: failure.reason,
+    ...(profileId === undefined ? {} : { profileId }),
+  });
+}
+
+export interface PreviewRequest {
+  readonly operation: IntegrationPlanOperation;
+  /** Required for restore; names the journalled operation being undone. */
+  readonly opId?: string;
+  readonly confirmDrift?: boolean;
+  readonly profileId?: number;
+}
+
+/**
+ * Plan an operation without performing it.
+ *
+ * Observation runs with both write-capable effects off, so this path prunes nothing, recovers
+ * nothing, takes no lock and enters no mutation flight. Everything it reads is a read: the target
+ * file, the ownership records, and for restore the journal row and its snapshot.
+ */
+export function previewIntegration(input: IntegrationWriteInput, request: PreviewRequest): IntegrationMutationPlan {
+  const observed = observeIntegration(input, { maintenance: false, recover: false });
+  if (observed.failed) return unboundPlan(input.clientId, request.operation, observed.failed, request.profileId);
+
+  const shared = {
+    operation: request.operation,
+    clientId: observed.clientId,
+    configPath: observed.configPath,
+    detectDir: observed.detectDir,
+    installKind: observed.io.statKind(observed.detectDir),
+    // Loopback-only clients cannot carry the admission header a non-loopback bind requires.
+    admissionBlocked: isLoopbackOnly(observed.clientId) && shouldInjectApiAuthHeader(input.config),
+    before: observed.before,
+    contribution: observed.contribution,
+    record: observed.record,
+    models: input.models,
+    classified: observed.classified,
+    ...(request.profileId === undefined ? {} : { profileId: request.profileId }),
+  };
+
+  if (request.operation !== "restore") return buildMutationPlan(shared);
+
+  const entry = request.opId === undefined ? null : observed.store.findOperation(request.opId);
+  if (!entry || entry.clientId !== observed.clientId) {
+    // Naming which of the two it was would report on journal contents the caller did not select.
+    return unboundPlan(observed.clientId, "restore", {
+      reason: "unsafe", state: observed.classified.state, message: "that operation cannot be undone",
+    }, request.profileId);
+  }
+  const snapshot = observed.store.readSnapshot(entry);
+  return buildMutationPlan({
+    ...shared,
+    restore: {
+      opId: entry.opId,
+      entry,
+      snapshotKind: snapshot.kind,
+      snapshotText: snapshot.kind === "stored" ? snapshot.text : null,
+      confirmDrift: request.confirmDrift === true,
+      driftsFromResult: !matchesOperationResult(entry, observed.before),
+    },
   });
 }
 
