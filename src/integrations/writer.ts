@@ -678,6 +678,15 @@ export function restoreIntegration(input: IntegrationRestoreInput): WriteOutcome
 
 export interface CoordinatedIntegrationOptions {
   lockSeams?: IntegrationWriterLockSeams;
+  /**
+   * Checked after the input is frozen and the writer lock is held, before any side effect.
+   *
+   * A confirmation is a statement about state the operator was shown. Checking it out here, where
+   * the lock already excludes cooperating writers, is what makes it a decision about the same
+   * state the mutation is about to change rather than about state from a moment earlier. A
+   * non-null result refuses without writing anything.
+   */
+  revalidate?: (frozen: IntegrationWriteInput) => Promise<WriteOutcome | null>;
 }
 
 /** Freeze all mutable resolution seams before the first lock await. */
@@ -729,15 +738,22 @@ async function coordinatedWrite(
   if (!prepared.ok) return prepared.refusal;
   const frozen = prepared.value;
   const spec = INTEGRATION_CLIENTS[frozen.clientId];
-  if (!spec.writerLock) return operation(frozen);
+  if (!spec.writerLock) {
+    const refused = await options?.revalidate?.(frozen);
+    return refused ?? operation(frozen);
+  }
 
   // An absent client home is not created merely to acquire a sibling lock.
   if (frozen.io.statKind(frozen.resolvedPaths.detectDir) !== "dir") {
-    return operation(frozen);
+    const refused = await options?.revalidate?.(frozen);
+    return refused ?? operation(frozen);
   }
   return withIntegrationWriterLock(
     frozen.resolvedPaths.configPath,
-    async () => operation(frozen),
+    async () => {
+      const refused = await options?.revalidate?.(frozen);
+      return refused ?? operation(frozen);
+    },
     options?.lockSeams,
     spec.writerLock.suffix,
   );

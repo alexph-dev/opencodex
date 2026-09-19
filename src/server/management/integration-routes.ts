@@ -31,6 +31,7 @@ import {
   disableIntegrationCoordinated,
   overwriteIntegrationCoordinated,
   restoreIntegrationCoordinated,
+  type CoordinatedIntegrationOptions,
   type IntegrationRestoreInput,
   type IntegrationWriteInput,
   type WriteRefused,
@@ -48,6 +49,7 @@ import type { ManagementContext } from "./context";
 import { loadExportModels, previewExportModels } from "./model-rows";
 import {
   previewIntegration,
+  type IntegrationMutationPlan,
   type IntegrationPlanOperation,
   type PreviewRequest,
 } from "../../integrations/mutation-plan";
@@ -352,22 +354,39 @@ function halfBoundResponse(ctx: ManagementContext): Response {
  * the moment the state it described moved, and the refusal carries a fresh plan so the operator
  * decides again against what is true now.
  */
-async function stalePlanResponse(
+function stalePlanGuard(
   clientId: IntegrationClientId,
   ctx: ManagementContext,
   store: IntegrationStateStore,
   request: PreviewRequest,
   fingerprint: string,
-): Promise<Response | null> {
-  const input = await buildIntegrationPreviewInput(clientId, ctx, store);
-  if (!input) return previewUnavailableResponse(ctx);
-  const plan = previewIntegration(input, request);
-  if (plan.canApply && plan.fingerprint === fingerprint) return null;
-  return jsonResponse({
-    error: "integration preview is stale",
-    code: "integration_preview_stale",
-    plan,
-  }, 409, ctx.req, ctx.config);
+): {
+  revalidate: NonNullable<CoordinatedIntegrationOptions["revalidate"]>;
+  response: () => Response | null;
+} {
+  let stale: IntegrationMutationPlan | "unavailable" | null = null;
+  return {
+    revalidate: async () => {
+      const input = await buildIntegrationPreviewInput(clientId, ctx, store);
+      if (!input) {
+        stale = "unavailable";
+        return { ok: false, reason: "conflict", state: "conflict", clientId, message: "no model roster is cached" };
+      }
+      const plan = previewIntegration(input, request);
+      if (plan.canApply && plan.fingerprint === fingerprint) return null;
+      stale = plan;
+      return { ok: false, reason: "conflict", state: plan.state, clientId, message: "that confirmation no longer describes this file" };
+    },
+    response: () => {
+      if (stale === null) return null;
+      if (stale === "unavailable") return previewUnavailableResponse(ctx);
+      return jsonResponse({
+        error: "integration preview is stale",
+        code: "integration_preview_stale",
+        plan: stale,
+      }, 409, ctx.req, ctx.config);
+    },
+  };
 }
 
 function internalErrorResponse(error: unknown, ctx: ManagementContext): Response {
@@ -782,16 +801,13 @@ export async function handleIntegrationRoutes(ctx: ManagementContext): Promise<R
       }
 
       const writeInput = await buildIntegrationWriteInput(operation.clientId, ctx, store);
-      if (restoreBinding !== "none") {
-        const stale = await stalePlanResponse(
-          operation.clientId,
-          ctx,
-          store,
-          { operation: "restore", opId, confirmDrift },
-          restoreBinding.fingerprint,
-        );
-        if (stale) return stale;
-      }
+      const restoreGuard = restoreBinding === "none" ? null : stalePlanGuard(
+        operation.clientId,
+        ctx,
+        store,
+        { operation: "restore", opId, confirmDrift },
+        restoreBinding.fingerprint,
+      );
       const restoreInput: IntegrationRestoreInput = {
         ...writeInput,
         opId,
@@ -803,8 +819,11 @@ export async function handleIntegrationRoutes(ctx: ManagementContext): Promise<R
         writeInput.io?.now ?? Date.now,
         () => restoreIntegrationCoordinated(restoreInput, {
           lockSeams: integrationMutationTestHooks?.lockSeams,
+          ...(restoreGuard ? { revalidate: restoreGuard.revalidate } : {}),
         }),
       );
+      const restoreStale = restoreGuard?.response();
+      if (restoreStale) return restoreStale;
       if (!result.ok) {
         /*
          * Drift is NOT special-cased here.
@@ -898,22 +917,30 @@ export async function handleIntegrationRoutes(ctx: ManagementContext): Promise<R
 
   try {
     const input = await buildIntegrationWriteInput(requestedClient, ctx, integrationStore());
-    if (binding !== "none") {
-      const stale = await stalePlanResponse(requestedClient, ctx, integrationStore(), { operation: binding.operation }, binding.fingerprint);
-      if (stale) return stale;
-    }
+    const guard = binding === "none" ? null : stalePlanGuard(
+      requestedClient,
+      ctx,
+      integrationStore(),
+      { operation: binding.operation },
+      binding.fingerprint,
+    );
     const result = await runIntegrationMutationFlight(
       requestedClient,
       parsed.enabled ? (parsed.overwriteConflict === true ? "overwrite" : "apply") : "disable",
       input.io?.now ?? Date.now,
       () => {
-        const options = { lockSeams: integrationMutationTestHooks?.lockSeams };
+        const options = {
+          lockSeams: integrationMutationTestHooks?.lockSeams,
+          ...(guard ? { revalidate: guard.revalidate } : {}),
+        };
         if (!parsed.enabled) return disableIntegrationCoordinated(input, options);
         return parsed.overwriteConflict === true
           ? overwriteIntegrationCoordinated(input, options)
           : applyIntegrationCoordinated(input, options);
       },
     );
+    const stale = guard?.response();
+    if (stale) return stale;
     if (!result.ok) return writerFailureResponse(requestedClient, result, ctx);
     return jsonResponse(result satisfies IntegrationToggleEnvelope, 200, req, ctx.config);
   } catch (error) {
