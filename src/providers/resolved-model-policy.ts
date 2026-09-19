@@ -37,7 +37,7 @@ export type StaticProviderPolicyField =
   | "supportsResponsesCustomTools" | "preserveResponsesReasoningContent" | "dropResponsesReasoningItems"
   | "modelSupportsReasoningSummaries"
   | "supportsVerbosity" | "modelSupportsVerbosity" | "responsesItemIdRepair" | "autoToolChoiceOnlyModels"
-  | "preserveReasoningContentModels" | "requiresReasoningPlaceholderModels" | "reasoningSplitModels"
+  | "preserveReasoningContentModels" | "requiresReasoningPlaceholderModels" | "reasoningSplitModels" | "inlineThinkTagModels"
   | "reasoningDetailsModels" | "thinkingToggleModels" | "thinkingBudgetModels" | "showThinkingSummary"
   | "escapeBuiltinToolNames" | "googleMode" | "project" | "location" | "modelCapabilities"
   | "modelAutoCompactTokenLimits" | "modelSuppressSyntheticMax" | "modelReasoningSummaryDelivery"
@@ -228,7 +228,7 @@ export function resolveModelPolicy(input: ResolveModelPolicyInput): ResolvedMode
     "noVisionModels", "noReasoningModels", "noTemperatureModels", "noTopPModels",
     "noPenaltyModels", "noJsonSchemaModels", "autoToolChoiceOnlyModels",
     "preserveReasoningContentModels", "requiresReasoningPlaceholderModels",
-    "reasoningSplitModels", "reasoningDetailsModels", "thinkingToggleModels", "thinkingBudgetModels",
+    "reasoningSplitModels", "inlineThinkTagModels", "reasoningDetailsModels", "thinkingToggleModels", "thinkingBudgetModels",
   ] as const) putUnion(key, entry?.[key]);
   for (const directModel of entry?.directReasoningEffortModels ?? []) {
     const staleBudget = [directModel, ...(entry?.thinkingBudgetModels ?? [])];
