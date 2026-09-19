@@ -346,7 +346,16 @@ export function exportSnapshotIdentity(config: OcxConfig): string | null {
  */
 function exportSnapshotKey(_config: OcxConfig): string | null {
   const snapshot = readConfigAdmissionSnapshot();
-  return snapshot.contentSha256;
+  if (snapshot.contentSha256 !== null) return snapshot.contentSha256;
+  /*
+   * A file that is not there is a well-defined configuration, not an unprovable one: it means
+   * defaults, and it is the ordinary state of a fresh install. Collapsing it into the unreadable
+   * case would have refused every preview on a machine with no config file, including CI.
+   *
+   * A file that exists and cannot be parsed is genuinely unprovable, and that still fails closed.
+   */
+  const { source, error } = snapshot.diagnostics;
+  return source === "default" && error === null ? "absent" : null;
 }
 
 /** Test seam: a fresh process has no snapshot, and suites must be able to reproduce that. */
