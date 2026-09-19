@@ -25,6 +25,7 @@ import type { OwnershipRecord } from "../../src/integrations/ownership";
 import type { JournalEntry } from "../../src/integrations/journal";
 import type { OcxConfig } from "../../src/types";
 import { createIntegrationStateStore } from "../../src/integrations/store";
+import { clinePendingPath } from "../../src/integrations/cline-io";
 import { resolveIntegrationPaths } from "../../src/integrations/registry";
 import { removeTreeWithRetry } from "../helpers/remove-tree";
 
@@ -233,12 +234,16 @@ describe("integration plan fingerprint", () => {
   });
 });
 
-const PLAN_BASE: PlanInput = { ...BASE, classified: { state: "absent" } };
+const PLAN_BASE: PlanInput = { ...BASE, classified: { state: "absent" }, parsed: {} };
+
+/** A document that already holds a value where the settings fragment goes. */
+const OCCUPIED = { settings: { providers: { opencodex: { baseUrl: "http://elsewhere" } } } };
 
 describe("integration mutation plan", () => {
   test("an allowed apply names every managed place and the history it writes", () => {
     const plan = buildMutationPlan(PLAN_BASE);
     expect(plan.canApply).toBe(true);
+    expect(plan.willChange).toBe(true);
     expect(plan.refusalReason).toBeUndefined();
     expect(plan.changes).toEqual([
       { kind: "add", path: "catalog.providers.opencodex" },
@@ -249,11 +254,15 @@ describe("integration mutation plan", () => {
     ]);
   });
 
-  test("a previously owned place is a replacement rather than an addition", () => {
+  test("an occupied place is a replacement whether or not we own it", () => {
+    // Deciding from our own record would call an overwrite of somebody else's key an addition,
+    // which is the one situation overwrite exists for.
     const plan = buildMutationPlan({
       ...PLAN_BASE,
-      classified: { state: "stale" },
-      record: { ...RECORD, fragmentPaths: [["settings", "providers", "opencodex"]] },
+      operation: "overwrite",
+      classified: { state: "conflict", reason: "unowned-key" },
+      record: null,
+      parsed: OCCUPIED,
     });
     expect(plan.changes).toContainEqual({ kind: "replace", path: "settings.providers.opencodex" });
     expect(plan.changes).toContainEqual({ kind: "add", path: "catalog.providers.opencodex" });
@@ -265,15 +274,42 @@ describe("integration mutation plan", () => {
     expect(JSON.stringify(plan)).not.toContain(CONFIG_PATH);
   });
 
-  test("refusals follow the writer's order and report no places", () => {
-    // Unsafe is decided before the install check, exactly as the writer refuses.
-    expect(buildMutationPlan({ ...PLAN_BASE, classified: { state: "unsafe", reason: "unparseable" }, installKind: "missing" }).refusalReason)
+  test("apply refuses in the writer's order: installation, admission, conflict, then unsafe", () => {
+    const conflicted: PlanInput = { ...PLAN_BASE, classified: { state: "conflict", reason: "foreign-edit" } };
+    // Installation outranks a conflict the file would otherwise report.
+    expect(buildMutationPlan({ ...conflicted, installKind: "missing" }).refusalReason).toBe("not_installed");
+    expect(buildMutationPlan({ ...conflicted, admissionBlocked: true }).refusalReason).toBe("non_loopback");
+    // And a conflict outranks the classifier's unsafe, which apply reports last.
+    expect(buildMutationPlan(conflicted).refusalReason).toBe("conflict");
+    expect(buildMutationPlan({ ...PLAN_BASE, classified: { state: "unsafe", reason: "blocked-container" } }).refusalReason)
       .toBe("unsafe");
-    expect(buildMutationPlan({ ...PLAN_BASE, installKind: "missing" }).refusalReason).toBe("not_installed");
-    expect(buildMutationPlan({ ...PLAN_BASE, admissionBlocked: true }).refusalReason).toBe("non_loopback");
     const refused = buildMutationPlan({ ...PLAN_BASE, installKind: "missing" });
     expect(refused.canApply).toBe(false);
     expect(refused.changes).toEqual([]);
+  });
+
+  test("disable asks its own questions and never asks about installation", () => {
+    const disable: PlanInput = { ...PLAN_BASE, operation: "disable", classified: { state: "current" } };
+    // Removing what we wrote from a file that still exists is meaningful whether or not the
+    // client is installed now, and it emits nothing admission policy could object to.
+    expect(buildMutationPlan({ ...disable, installKind: "missing" }).canApply).toBe(true);
+    expect(buildMutationPlan({ ...disable, admissionBlocked: true }).canApply).toBe(true);
+    expect(buildMutationPlan({ ...disable, classified: { state: "conflict", reason: "foreign-edit" } }).refusalReason)
+      .toBe("conflict");
+  });
+
+  test("an operation that would write nothing says so and names no places", () => {
+    // The writer succeeds without writing in both of these, so reporting a snapshot and a journal
+    // row would describe consequences that never happen.
+    const applied = buildMutationPlan({ ...PLAN_BASE, classified: { state: "current" } });
+    expect(applied.canApply).toBe(true);
+    expect(applied.willChange).toBe(false);
+    expect(applied.changes).toEqual([]);
+
+    const disabled = buildMutationPlan({ ...PLAN_BASE, operation: "disable", classified: { state: "absent" } });
+    expect(disabled.canApply).toBe(true);
+    expect(disabled.willChange).toBe(false);
+    expect(disabled.changes).toEqual([]);
   });
 
   test("overwrite is the operation allowed through a conflict", () => {
@@ -284,7 +320,7 @@ describe("integration mutation plan", () => {
   });
 
   test("restore reports an expired backup and unconfirmed drift", () => {
-    const plan: PlanInput = { ...RESTORE_BASE, classified: { state: "current" } };
+    const plan: PlanInput = { ...RESTORE_BASE, classified: { state: "current" }, parsed: {} };
     expect(buildMutationPlan({ ...plan, restore: { ...RESTORE, snapshotKind: "expired" } }).refusalReason)
       .toBe("snapshot_expired");
     const drifted = buildMutationPlan({ ...plan, restore: { ...RESTORE, driftsFromResult: true } });
@@ -323,7 +359,9 @@ describe("integration preview writes nothing", () => {
       writeFileSync(configPath, "{}\n");
 
       const store = createIntegrationStateStore(storeRoot);
-      const configBefore = readFileSync(configPath, "utf8");
+      // Maintenance a mutation would retry on its way through. A preview must leave it pending.
+      store.markPruneFailure("opencode", "seeded pending prune");
+      const homeBefore = treeSnapshot(home);
       const storeBefore = treeSnapshot(storeRoot);
 
       const plan = previewIntegration(
@@ -336,13 +374,52 @@ describe("integration preview writes nothing", () => {
       expect(plan.changes).toContainEqual({ kind: "journal", path: "$journal" });
 
       // The whole promise of the feature, checked against the filesystem rather than asserted.
-      expect(readFileSync(configPath, "utf8")).toBe(configBefore);
+      // The entire home rather than the target alone: a writer lock or a marker sibling would
+      // appear next to the file, not inside it, and that is exactly what must not happen here.
+      expect(treeSnapshot(home)).toEqual(homeBefore);
       expect(treeSnapshot(storeRoot)).toEqual(storeBefore);
+      // Still pending, so the read path ran no maintenance.
+      expect(Object.keys(store.readMaintenance().pruneFailures)).toContain("opencode");
 
       // A plan describes places, never contents or locations.
       const serialized = JSON.stringify(plan);
       expect(serialized).not.toContain(home);
       expect(serialized).not.toContain("127.0.0.1");
+    } finally {
+      removeTreeWithRetry(home);
+      removeTreeWithRetry(storeRoot);
+    }
+  });
+
+  test("a pending client transaction is left exactly as found", () => {
+    const home = mkdtempSync(join(tmpdir(), "ocx-preview-cline-"));
+    const storeRoot = mkdtempSync(join(tmpdir(), "ocx-preview-cline-store-"));
+    try {
+      const env = {} as NodeJS.ProcessEnv;
+      const { configPath, detectDir } = resolveIntegrationPaths("cline", env, home);
+      expect(configPath.startsWith(home), configPath).toBe(true);
+      mkdirSync(detectDir, { recursive: true });
+      mkdirSync(dirname(configPath), { recursive: true });
+      writeFileSync(configPath, "{}\n");
+
+      const store = createIntegrationStateStore(storeRoot);
+      const markerPath = clinePendingPath(store, configPath);
+      mkdirSync(dirname(markerPath), { recursive: true });
+      writeFileSync(markerPath, "{\"pending\":\"left over from an interrupted mutation\"}\n");
+
+      const homeBefore = treeSnapshot(home);
+      const storeBefore = treeSnapshot(storeRoot);
+
+      const plan = previewIntegration(
+        { clientId: "cline", models: FIXTURE_MODELS, config: FIXTURE_CONFIG, port: 10100, env, home, store },
+        { operation: "apply" },
+      );
+
+      // Recovery is a mutation. A preview reports what it found and repairs nothing, so the
+      // marker and its siblings survive byte for byte whatever the plan concluded.
+      expect(plan.version).toBe(1);
+      expect(treeSnapshot(home)).toEqual(homeBefore);
+      expect(treeSnapshot(storeRoot)).toEqual(storeBefore);
     } finally {
       removeTreeWithRetry(home);
       removeTreeWithRetry(storeRoot);

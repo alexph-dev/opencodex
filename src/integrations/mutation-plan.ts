@@ -22,7 +22,7 @@ import { parseClineDocument } from "./cline-document";
 import { PARSE_FAILED, defaultIntegrationIO, loadTarget, parseConfig, type IntegrationIO } from "./config-io";
 import { INTEGRATION_CLIENTS, isLoopbackOnly, resolveIntegrationPaths, type IntegrationClientId } from "./registry";
 import { shouldInjectApiAuthHeader } from "../codex/inject";
-import { classifyIntegration, exportContextOf, type IntegrationState, type StateReason } from "./state";
+import { classifyIntegration, exportContextOf, readPath, type IntegrationState, type StateReason } from "./state";
 import { createIntegrationStateStore, type IntegrationStateStore } from "./store";
 import type { OcxConfig } from "../types";
 import { matchesOperationResult, type JournalEntry } from "./journal";
@@ -73,6 +73,14 @@ export interface IntegrationMutationPlan {
   readonly changes: readonly IntegrationPlanChange[];
   readonly fingerprint: string;
   readonly canApply: boolean;
+  /**
+   * Whether confirming would write at all.
+   *
+   * An apply against an already-current file and a disable against an absent one both succeed
+   * while writing nothing, so reporting a snapshot and a journal row for them would describe
+   * consequences that never happen.
+   */
+  readonly willChange: boolean;
   readonly refusalReason?: RefusalReason;
   readonly profileId?: number;
 }
@@ -262,7 +270,22 @@ export function planFingerprint(input: PlanFingerprintInput): string {
 /** The observation facts a plan is derived from, beside the fingerprint inputs. */
 export interface PlanInput extends PlanFingerprintInput {
   readonly classified: { readonly state: IntegrationState; readonly reason?: StateReason };
+  /**
+   * The parsed target document. Whether a managed place is occupied is a fact about the file, not
+   * about our record: an overwrite of a key somebody else wrote replaces a value even though no
+   * record of ours mentions it.
+   */
+  readonly parsed: unknown;
 }
+
+type PlanOutcome =
+  | { readonly kind: "refuse"; readonly reason: RefusalReason }
+  | { readonly kind: "noop" }
+  | { readonly kind: "change" };
+
+const CHANGE: PlanOutcome = { kind: "change" };
+const NOOP: PlanOutcome = { kind: "noop" };
+const deny = (reason: RefusalReason): PlanOutcome => ({ kind: "refuse", reason });
 
 function foreignEditOf(input: PlanInput): IntegrationPlanForeignEdit {
   if (input.restore?.driftsFromResult) return "drift";
@@ -279,25 +302,51 @@ function foreignEditOf(input: PlanInput): IntegrationPlanForeignEdit {
  * reported before either, because that is the sequence the writer itself refuses in. A plan that
  * named a different reason than the mutation would name is worse than no plan.
  */
-function refusalOf(input: PlanInput): RefusalReason | undefined {
-  if (input.classified.state === "unsafe") return "unsafe";
-  if (input.installKind !== "dir") return "not_installed";
-  if (input.admissionBlocked) return "non_loopback";
-  if (input.operation === "restore") {
-    if (input.restore === undefined) return "unsafe";
-    if (input.restore.snapshotKind === "expired") return "snapshot_expired";
-    if (input.restore.driftsFromResult && !input.restore.confirmDrift) return "drift_requires_confirm";
-    return undefined;
-  }
+function applyOutcome(input: PlanInput): PlanOutcome {
+  if (input.installKind !== "dir") return deny("not_installed");
+  if (input.admissionBlocked) return deny("non_loopback");
   // Overwrite exists precisely to proceed through a conflict the operator has been shown.
-  if (input.classified.state === "conflict" && input.operation !== "overwrite") return "conflict";
-  return undefined;
+  if (input.classified.state === "conflict" && input.operation !== "overwrite") return deny("conflict");
+  if (input.classified.state === "unsafe") return deny("unsafe");
+  if (input.classified.state === "current") return NOOP;
+  return CHANGE;
 }
 
-function ownedPath(record: OwnershipRecord | null, path: readonly string[]): boolean {
-  return (record?.fragmentPaths ?? []).some(owned =>
-    owned.length === path.length && owned.every((segment, index) => segment === path[index]));
+/**
+ * Disable answers a different question, so it asks different ones.
+ *
+ * It never checks installation or admission: removing what we wrote from a file that still exists
+ * is meaningful whether or not the client is installed now, and it emits nothing that admission
+ * policy could object to. An absent block is a success that writes nothing rather than a refusal.
+ */
+function disableOutcome(input: PlanInput): PlanOutcome {
+  if (input.classified.state === "absent") return NOOP;
+  if (input.classified.state === "conflict") return deny("conflict");
+  if (input.classified.state === "unsafe") return deny("unsafe");
+  return CHANGE;
 }
+
+function restoreOutcome(input: PlanInput): PlanOutcome {
+  if (input.restore === undefined) return deny("unsafe");
+  if (input.restore.snapshotKind === "expired") return deny("snapshot_expired");
+  if (input.restore.driftsFromResult && !input.restore.confirmDrift) return deny("drift_requires_confirm");
+  return CHANGE;
+}
+
+/**
+ * What this operation would do, decided the way the operation itself decides it.
+ *
+ * Applying one global sequence to all four was wrong: it reported disable as refused on an
+ * uninstalled client the writer would have accepted, and it ranked the classifier's unsafe ahead
+ * of a conflict that apply reports first. A plan is only useful if it reaches the same verdict,
+ * for the same reason, as the mutation it describes.
+ */
+function outcomeOf(input: PlanInput): PlanOutcome {
+  if (input.operation === "restore") return restoreOutcome(input);
+  if (input.operation === "disable") return disableOutcome(input);
+  return applyOutcome(input);
+}
+
 
 /**
  * The managed places this operation would touch, plus the history it would write.
@@ -313,7 +362,10 @@ function changesOf(input: PlanInput): readonly IntegrationPlanChange[] {
     for (const fragment of input.contribution?.fragments ?? []) {
       const path = canonicalSchemaPath(input.clientId, fragment.path);
       if (path === null) continue;
-      changes.push({ kind: ownedPath(input.record, fragment.path) ? "replace" : "add", path });
+      // Occupied is a fact about the document. Deciding from our own record instead would call an
+      // overwrite of somebody else's key an addition, which is the one case overwrite exists for.
+      const occupied = readPath(input.parsed, fragment.path) !== undefined;
+      changes.push({ kind: occupied ? "replace" : "add", path });
     }
   }
   if (input.operation === "disable" || input.operation === "restore") {
@@ -343,17 +395,19 @@ function changesOf(input: PlanInput): readonly IntegrationPlanChange[] {
  * is the answer an operator needs, and it carries no more detail than an allowed one.
  */
 export function buildMutationPlan(input: PlanInput): IntegrationMutationPlan {
-  const refusalReason = refusalOf(input);
+  const outcome = outcomeOf(input);
   return Object.freeze({
     version: 1 as const,
     clientId: input.clientId,
     operation: input.operation,
     state: input.classified.state,
     foreignEdit: foreignEditOf(input),
-    changes: refusalReason === undefined ? changesOf(input) : Object.freeze([]),
+    // Only a plan that would actually write describes places to write.
+    changes: outcome.kind === "change" ? changesOf(input) : Object.freeze([]),
     fingerprint: planFingerprint(input),
-    canApply: refusalReason === undefined,
-    ...(refusalReason === undefined ? {} : { refusalReason }),
+    canApply: outcome.kind !== "refuse",
+    willChange: outcome.kind === "change",
+    ...(outcome.kind === "refuse" ? { refusalReason: outcome.reason } : {}),
     ...(input.profileId === undefined ? {} : { profileId: input.profileId }),
   });
 }
@@ -382,6 +436,7 @@ function unboundPlan(
     changes: Object.freeze([]),
     fingerprint: PLAN_UNBOUND_FINGERPRINT,
     canApply: false,
+    willChange: false,
     refusalReason: failure.reason,
     ...(profileId === undefined ? {} : { profileId }),
   });
@@ -419,6 +474,7 @@ export function previewIntegration(input: IntegrationWriteInput, request: Previe
     record: observed.record,
     models: input.models,
     classified: observed.classified,
+    parsed: observed.parsed,
     ...(request.profileId === undefined ? {} : { profileId: request.profileId }),
   };
 
