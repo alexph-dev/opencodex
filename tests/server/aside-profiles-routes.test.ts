@@ -1,6 +1,6 @@
 import { loadConfig } from "../../src/config";
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { handleManagementAPI } from "../../src/server/management-api";
@@ -58,6 +58,20 @@ afterEach(() => {
 });
 
 function path(id: number): string { return join(home, ".aside", "u", String(id), "models.json"); }
+
+/** Whole-tree content, so an appended journal row or replaced snapshot cannot hide. */
+function treeWitness(dir: string): string {
+  if (!existsSync(dir)) return "";
+  return readdirSync(dir, { recursive: true })
+    .map(entry => String(entry))
+    .sort()
+    .map(entry => {
+      const full = join(dir, entry);
+      if (!existsSync(full) || statSync(full).isDirectory()) return `${entry}/`;
+      return `${entry}:${readFileSync(full, "utf8")}`;
+    })
+    .join("\u0000");
+}
 
 /** A preview only answers from a roster an authoritative load already finished. */
 async function seedRoster(): Promise<void> {
@@ -245,6 +259,8 @@ test("a stale profile confirmation is refused before the preference is written",
   const preview = await api("/api/client-integrations/aside/profiles/2/preview", "POST", { operation: "apply" });
   const plan = await preview.json() as { fingerprint: string };
   const before = readFileSync(path(2), "utf8");
+  const homeBefore = treeWitness(join(home, ".aside"));
+  const storeBefore = treeWitness(join(root, "store"));
 
   const response = await api("/api/client-integrations/aside/profiles/2", "PUT", {
     enabled: true, operation: "apply", planFingerprint: `${plan.fingerprint}-not-current`,
@@ -252,6 +268,10 @@ test("a stale profile confirmation is refused before the preference is written",
   expect(response.status).toBe(409);
   expect((await response.json() as { code: string }).code).toBe("integration_preview_stale");
   expect(readFileSync(path(2), "utf8")).toBe(before);
+  // Ownership records, snapshots and journal rows live in the store, and an Aside import writes
+  // history before any writer runs, so the target file alone would not see either of them.
+  expect(treeWitness(join(home, ".aside"))).toBe(homeBefore);
+  expect(treeWitness(join(root, "store"))).toBe(storeBefore);
   // Aside persists its preference before any writer runs, so a check that fired later would have
   // saved this already.
   expect(saved).toBeUndefined();
