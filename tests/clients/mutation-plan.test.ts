@@ -1,4 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join, relative } from "node:path";
 import {
   MANAGED_PATH_TEMPLATES,
   PLAN_CHANGE_LIMIT,
@@ -6,6 +9,7 @@ import {
   canonicalSchemaPath,
   orderPlanChanges,
   planFingerprint,
+  previewIntegration,
   type IntegrationPlanChange,
   type PlanInput,
   type PlanFingerprintInput,
@@ -20,6 +24,9 @@ import {
 import type { OwnershipRecord } from "../../src/integrations/ownership";
 import type { JournalEntry } from "../../src/integrations/journal";
 import type { OcxConfig } from "../../src/types";
+import { createIntegrationStateStore } from "../../src/integrations/store";
+import { resolveIntegrationPaths } from "../../src/integrations/registry";
+import { removeTreeWithRetry } from "../helpers/remove-tree";
 
 const FIXTURE_MODELS: ExportModel[] = [
   { namespaced: "anthropic/claude-opus-4-8", provider: "anthropic", id: "claude-opus-4-8", contextWindow: 200_000 },
@@ -284,5 +291,61 @@ describe("integration mutation plan", () => {
     expect(drifted.refusalReason).toBe("drift_requires_confirm");
     expect(drifted.foreignEdit).toBe("drift");
     expect(buildMutationPlan({ ...plan, restore: { ...RESTORE, driftsFromResult: true, confirmDrift: true } }).canApply).toBe(true);
+  });
+});
+
+/** Every file under a directory with its bytes, so "nothing changed" is a comparison and not a claim. */
+function treeSnapshot(root: string): Record<string, string> {
+  const seen: Record<string, string> = {};
+  const walk = (dir: string): void => {
+    for (const name of readdirSync(dir).sort()) {
+      const full = join(dir, name);
+      if (statSync(full).isDirectory()) walk(full);
+      else seen[relative(root, full)] = readFileSync(full, "utf8");
+    }
+  };
+  walk(root);
+  return seen;
+}
+
+describe("integration preview writes nothing", () => {
+  test("planning an apply leaves the client file and the whole store untouched", () => {
+    const home = mkdtempSync(join(tmpdir(), "ocx-preview-home-"));
+    const storeRoot = mkdtempSync(join(tmpdir(), "ocx-preview-store-"));
+    try {
+      const env = {} as NodeJS.ProcessEnv;
+      const { configPath, detectDir } = resolveIntegrationPaths("opencode", env, home);
+      // Fail loudly rather than reading somebody's real configuration: every client resolves
+      // through the home argument, and a client that stopped doing so must not be read here.
+      expect(configPath.startsWith(home), configPath).toBe(true);
+      mkdirSync(detectDir, { recursive: true });
+      mkdirSync(dirname(configPath), { recursive: true });
+      writeFileSync(configPath, "{}\n");
+
+      const store = createIntegrationStateStore(storeRoot);
+      const configBefore = readFileSync(configPath, "utf8");
+      const storeBefore = treeSnapshot(storeRoot);
+
+      const plan = previewIntegration(
+        { clientId: "opencode", models: FIXTURE_MODELS, config: FIXTURE_CONFIG, port: 10100, env, home, store },
+        { operation: "apply" },
+      );
+
+      expect(plan.canApply).toBe(true);
+      expect(plan.changes.some(change => change.kind === "add")).toBe(true);
+      expect(plan.changes).toContainEqual({ kind: "journal", path: "$journal" });
+
+      // The whole promise of the feature, checked against the filesystem rather than asserted.
+      expect(readFileSync(configPath, "utf8")).toBe(configBefore);
+      expect(treeSnapshot(storeRoot)).toEqual(storeBefore);
+
+      // A plan describes places, never contents or locations.
+      const serialized = JSON.stringify(plan);
+      expect(serialized).not.toContain(home);
+      expect(serialized).not.toContain("127.0.0.1");
+    } finally {
+      removeTreeWithRetry(home);
+      removeTreeWithRetry(storeRoot);
+    }
   });
 });
