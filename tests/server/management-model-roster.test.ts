@@ -84,5 +84,18 @@ describe("a preview reads only a roster an authoritative load already finished",
     if (first) first.id = "mutated-by-the-caller";
     const snapshot = previewExportModels(CONFIG);
     expect(snapshot?.some(model => model.id === "mutated-by-the-caller")).toBe(false);
+
+    // The same has to hold for a reader: holding the retained objects would let a consumer edit
+    // the roster every later preview plans against.
+    const read = previewExportModels(CONFIG);
+    const readFirst = read?.[0];
+    expect(readFirst).toBeDefined();
+    if (readFirst) {
+      readFirst.id = "mutated-by-a-reader";
+      readFirst.inputModalities = ["mutated"];
+    }
+    const fresh = previewExportModels(CONFIG);
+    expect(fresh?.some(model => model.id === "mutated-by-a-reader")).toBe(false);
+    expect(fresh?.some(model => model.inputModalities?.includes("mutated"))).toBe(false);
   });
 });

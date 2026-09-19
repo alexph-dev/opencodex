@@ -337,7 +337,13 @@ export function previewExportSnapshot(
   // believing it held the identity of another.
   const snapshot = lastExportSnapshot;
   if (snapshot === null || snapshot.key !== exportSnapshotKey(config)) return null;
-  return { models: snapshot.models, identity: `${snapshot.key}:${snapshot.generation}` };
+  // Cloned on the way out as well as on the way in. The retained copy is the authority, and a
+  // reader holding its objects could edit the roster every later preview plans against without
+  // going anywhere near this module.
+  return {
+    models: structuredClone(snapshot.models) as readonly ExportModel[],
+    identity: `${snapshot.key}:${snapshot.generation}`,
+  };
 }
 
 export function previewExportModels(config: OcxConfig): readonly ExportModel[] | null {

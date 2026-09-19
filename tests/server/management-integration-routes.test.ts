@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
@@ -1322,9 +1322,23 @@ describe("integration previews are reads", () => {
   test("a bound change cannot commit without a plan that still validates", async () => {
     const configPath = installHermes();
     const before = existsSync(configPath) ? readFileSync(configPath, "utf8") : null;
-    const storeListing = (): string =>
-      existsSync(storeRoot) ? readdirSync(storeRoot, { recursive: true }).sort().join("|") : "";
-    const storeBefore = storeListing();
+    // Content, not names. A journal append, an overwritten ownership record and a replaced
+    // snapshot all leave the file list identical, and every one of them is a write.
+    const storeContents = (): string => {
+      if (!existsSync(storeRoot)) return "";
+      return readdirSync(storeRoot, { recursive: true })
+        .map(entry => String(entry))
+        .sort()
+        .map(entry => {
+          const full = join(storeRoot, entry);
+          if (!existsSync(full) || statSync(full).isDirectory()) return `${entry}/`;
+          return `${entry}:${readFileSync(full, "utf8")}`;
+        })
+        .join("\u0000");
+    };
+    resetExportSnapshotForTests();
+    await loadExportModels(config, []);
+    const storeBefore = storeContents();
 
     const response = await api("/api/client-integrations/hermes", {
       method: "PUT",
@@ -1334,14 +1348,13 @@ describe("integration previews are reads", () => {
 
     // Whatever the reason the plan does not validate, the mutation does not happen. This is the
     // case that would catch a refactor quietly dropping the binding on the way to the writer.
+    // With a roster present this can only be a fingerprint comparison, so the reason is exact.
     expect(response.status).toBe(409);
     const body = await response.json() as { code: string };
-    expect(["integration_preview_stale", "integration_preview_unavailable"]).toContain(body.code);
+    expect(body.code).toBe("integration_preview_stale");
 
     const after = existsSync(configPath) ? readFileSync(configPath, "utf8") : null;
     expect(after).toBe(before);
-    // Target bytes alone would miss a snapshot, an ownership record or a journal row written on
-    // the way to a refusal, and those are writes too.
-    expect(storeListing()).toBe(storeBefore);
+    expect(storeContents()).toBe(storeBefore);
   });
 });
