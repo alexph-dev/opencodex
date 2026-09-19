@@ -1248,12 +1248,12 @@ jobs:
           GATED_JOBS="changes select-windows-runner test storage-policy api-usage gates"
           GATED_JOBS="$GATED_JOBS platform-macos keyring-smoke docker-smoke npm-global-smoke"
           GATED_JOBS="$GATED_JOBS macos-control platform-windows docs-site-build"
-          GATED_JOBS="$GATED_JOBS structure-gate"
+          GATED_JOBS="$GATED_JOBS structure-gate macos-app"
 
           expected_for() {
             case "$1" in
               changes|select-windows-runner) echo requested ;;
-              test|storage-policy|api-usage|gates|platform-macos|keyring-smoke|docker-smoke)
+              test|storage-policy|api-usage|gates|platform-macos|keyring-smoke|docker-smoke|macos-app)
                 echo "$scoped" ;;
               npm-global-smoke) echo "$packaging" ;;
               docs-site-build) echo "$docs" ;;
