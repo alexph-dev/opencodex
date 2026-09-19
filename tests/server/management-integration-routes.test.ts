@@ -1286,4 +1286,24 @@ describe("integration previews are reads", () => {
     expect(response.status).toBe(400);
     expect((await response.json() as { code: string }).code).toBe("invalid_preview_operation");
   });
+
+  test("a bound change cannot commit without a plan that still validates", async () => {
+    const configPath = installHermes();
+    const before = existsSync(configPath) ? readFileSync(configPath, "utf8") : null;
+
+    const response = await api("/api/client-integrations/hermes", {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ enabled: true, operation: "apply", planFingerprint: "p1:not-the-current-plan" }),
+    });
+
+    // Whatever the reason the plan does not validate, the mutation does not happen. This is the
+    // case that would catch a refactor quietly dropping the binding on the way to the writer.
+    expect(response.status).toBe(409);
+    const body = await response.json() as { code: string };
+    expect(["integration_preview_stale", "integration_preview_unavailable"]).toContain(body.code);
+
+    const after = existsSync(configPath) ? readFileSync(configPath, "utf8") : null;
+    expect(after).toBe(before);
+  });
 });
