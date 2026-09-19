@@ -37,6 +37,7 @@ export interface UsageTimeline {
   series: TimelineSeries[];
   availableModels: string[];
   missingMeasurements: number;
+  truncated: boolean;
 }
 
 const METRICS: readonly TimelineMetric[] = ["total", "input", "output", "cached"];
@@ -195,6 +196,7 @@ export function createTimelineAccumulator(query: TimelineQuery): { add(entry: Pe
       series: kept,
       availableModels: [...availableModels].sort(),
       missingMeasurements,
+      truncated: false,
     };
   }
 

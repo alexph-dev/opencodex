@@ -1,4 +1,4 @@
-import { scanUsageLedgerCooperatively } from "../../usage/ledger-scanner";
+import { readUsageSnapshotForManagement } from "../../usage/log";
 import { createTimelineAccumulator, parseTimelineQuery } from "../../usage/timeline";
 import { jsonResponse } from "../auth-cors";
 import type { ManagementContext } from "./context";
@@ -16,12 +16,17 @@ export async function handleUsageTimelineRoutes(ctx: ManagementContext): Promise
   const key = JSON.stringify({ ...query, now: roundedNow });
   const current = Date.now();
   const cached = cache.get(key);
-  if (cached && cached.expiresAt > current) return jsonResponse(await cached.promise);
+  if (cached && cached.expiresAt > current) return jsonResponse(await cached.promise, 200, req, ctx.config);
   let promise: Promise<ReturnType<ReturnType<typeof createTimelineAccumulator>["finish"]>>;
   promise = (async () => {
     const accumulator = createTimelineAccumulator(query);
-    await scanUsageLedgerCooperatively({ signal: req.signal, onEntry: entry => accumulator.add(entry) });
-    return accumulator.finish();
+    const snapshot = await readUsageSnapshotForManagement(ctx.config.managementUsageMaxReadBytes);
+    if (req.signal.aborted) throw req.signal.reason ?? new Error("usage timeline request aborted");
+    for (const entry of snapshot.entries) accumulator.add(entry);
+    return {
+      ...accumulator.finish(),
+      truncated: snapshot.truncatedPrefixBytes > 0 || snapshot.entriesTruncated,
+    };
   })().catch(error => {
     const entry = cache.get(key);
     if (entry?.promise === promise) cache.delete(key);
