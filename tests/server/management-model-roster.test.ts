@@ -7,7 +7,7 @@ import {
 } from "../../src/server/management/model-rows";
 import type { CatalogModel } from "../../src/codex/catalog";
 import type { OcxConfig } from "../../src/types";
-import { setCached } from "../../src/codex/model-cache";
+import { clearModelCache, reconcileModelCacheProviders, setCached } from "../../src/codex/model-cache";
 
 /**
  * A read-only caller has to be able to see what a writer would write without performing the
@@ -83,6 +83,32 @@ describe("a preview reads only a roster an authoritative load already finished",
     // cannot see it, and an authority generation does not move for it either.
     expect(setCached("supplied", [{ id: "discovered-later", provider: "supplied" }])).toBe(true);
     expect(previewExportModels(CONFIG)).toBeNull();
+  });
+
+  test("a wholesale clear retires the snapshot even though no provider counter survives it", async () => {
+    resetExportSnapshotForTests();
+    await loadExportModels(CONFIG, SUPPLIED);
+    expect(previewExportModels(CONFIG)).not.toBeNull();
+
+    // The clear empties the map, so per-provider counters cannot record it. Only a global term
+    // can, and without one every derived roster would read as unchanged.
+    clearModelCache();
+    expect(previewExportModels(CONFIG)).toBeNull();
+  });
+
+  test("a provider that leaves and returns cannot match a roster built before it left", async () => {
+    resetExportSnapshotForTests();
+    await loadExportModels(CONFIG, SUPPLIED);
+    expect(previewExportModels(CONFIG)).not.toBeNull();
+
+    // Reconciliation drops the provider's revision entry. If that were the whole story the entry
+    // would come back at zero and the old stamp would match again, which is the ABA this guards.
+    reconcileModelCacheProviders(new Set<string>());
+    expect(previewExportModels(CONFIG)).toBeNull();
+
+    await loadExportModels(CONFIG, SUPPLIED);
+    const reborn = previewExportModels(CONFIG);
+    expect(reborn).not.toBeNull();
   });
 
   test("the snapshot does not share objects with the caller that produced it", async () => {

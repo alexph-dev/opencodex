@@ -274,6 +274,7 @@ export function reconcileModelCacheProviders(
   const removedProviders = new Set<string>();
   const trackedProviders = new Set([
     ...providerCacheGenerations.keys(),
+    ...providerCacheRevisions.keys(),
     ...failureAt.keys(),
     ...discoveryStatus.keys(),
     ...liveModelCounts.keys(),
@@ -284,10 +285,17 @@ export function reconcileModelCacheProviders(
     if (validProviders.has(provider)) continue;
     if (!revokedRemovedProviderAuthority) {
       globalCacheGeneration += 1;
+      // Advanced BEFORE any revision entry is dropped, so a provider that comes back cannot
+      // present the counter a roster was built against. Without this the delete below is an ABA:
+      // the entry returns at zero and an old stamp matches again.
+      globalContentRevision += 1;
       revokedRemovedProviderAuthority = true;
     }
     providerCacheGenerations.set(provider, (providerCacheGenerations.get(provider) ?? 0) + 1);
     providerCacheGenerations.delete(provider);
+    // Dropped rather than left behind: a provider the configuration no longer has must not keep
+    // an entry alive for the life of the process merely because nothing cleared the whole cache.
+    providerCacheRevisions.delete(provider);
     deleteCachedProvider(provider);
     failureAt.delete(provider);
     discoveryStatus.delete(provider);
