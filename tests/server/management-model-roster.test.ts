@@ -98,6 +98,10 @@ describe("a preview reads only a roster an authoritative load already finished",
 
   test("a provider that leaves and returns cannot match a roster built before it left", async () => {
     resetExportSnapshotForTests();
+    // The provider has to be CACHED for reconciliation to have anything to remove. Supplying a
+    // roster skips the gather, so without this nothing tracks "supplied" and the prune is a no-op
+    // that proves nothing.
+    expect(setCached("supplied", [{ id: "cached-before-removal", provider: "supplied" }])).toBe(true);
     await loadExportModels(CONFIG, SUPPLIED);
     expect(previewExportModels(CONFIG)).not.toBeNull();
 
@@ -106,6 +110,7 @@ describe("a preview reads only a roster an authoritative load already finished",
     reconcileModelCacheProviders(new Set<string>());
     expect(previewExportModels(CONFIG)).toBeNull();
 
+    expect(setCached("supplied", [{ id: "cached-after-return", provider: "supplied" }])).toBe(true);
     await loadExportModels(CONFIG, SUPPLIED);
     const reborn = previewExportModels(CONFIG);
     expect(reborn).not.toBeNull();
