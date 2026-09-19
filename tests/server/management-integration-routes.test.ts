@@ -142,6 +142,20 @@ function hermesConfigPath(): string {
   return INTEGRATION_CLIENTS.hermes.configPath(routeEnv, home);
 }
 
+/** Whole-store content, so an append or an overwrite cannot hide behind an unchanged file list. */
+function storeContentWitness(root: string): string {
+  if (!existsSync(root)) return "";
+  return readdirSync(root, { recursive: true })
+    .map(entry => String(entry))
+    .sort()
+    .map(entry => {
+      const full = join(root, entry);
+      if (!existsSync(full) || statSync(full).isDirectory()) return `${entry}/`;
+      return `${entry}:${readFileSync(full, "utf8")}`;
+    })
+    .join("\u0000");
+}
+
 async function previewApi(path: string, body: unknown): Promise<Response> {
   return api(path, {
     method: "POST",
@@ -1281,6 +1295,7 @@ describe("integration previews are reads", () => {
     const plan = await preview.json() as { canApply: boolean; fingerprint: string };
     expect(plan.canApply).toBe(true);
     const before = existsSync(configPath) ? readFileSync(configPath, "utf8") : null;
+    const storeBefore = storeContentWitness(storeRoot);
 
     /*
      * Publishing a new roster as the lock is acquired puts the replacement exactly where it is
@@ -1305,6 +1320,9 @@ describe("integration previews are reads", () => {
     expect(commit.status).toBe(409);
     expect((await commit.json() as { code: string }).code).toBe("integration_preview_stale");
     expect(existsSync(configPath) ? readFileSync(configPath, "utf8") : null).toBe(before);
+    // The race has to leave the store alone too: a snapshot or journal row written before the
+    // guard refused would be invisible to a target-bytes check.
+    expect(storeContentWitness(storeRoot)).toBe(storeBefore);
   });
 
   test("a previewed undo commits with its binding", async () => {

@@ -12,7 +12,7 @@ import {
 } from "../../integrations/aside-profile-journal";
 import type { WriteRefused } from "../../integrations/writer";
 import type { IntegrationMutationPlan, IntegrationPlanOperation } from "../../integrations/mutation-plan";
-import { previewExportModels } from "./model-rows";
+import { previewExportModels, previewExportSnapshot } from "./model-rows";
 import type { ManagementContext } from "./context";
 import { readManagementJsonBody, readOptionalManagementJsonBody, rethrowManagementBodyTooLarge } from "./body";
 import { jsonResponse } from "../auth-cors";
@@ -140,7 +140,7 @@ function nestedProfileContext(ctx: ManagementContext): { ctx: ManagementContext;
     url.searchParams.set("client", "aside");
     return { ctx: { ...ctx, url }, action: "journal" };
   }
-  if (parts.length > 2 || !parts[0] || (parts[1] !== undefined && !["journal", "restore"].includes(parts[1]))) {
+  if (parts.length > 2 || !parts[0] || (parts[1] !== undefined && !["journal", "restore", "preview"].includes(parts[1]))) {
     throw new ProfileQueryError("Invalid Aside profile path");
   }
   const prior = url.searchParams.get("profile");
@@ -171,6 +171,35 @@ export async function handleAsideProfileRoutes(
         return asideJournalDeleteResponse(ctx, opId, options);
       }
       return null;
+    }
+    if (normalized.action === "preview") {
+      if (req.method !== "POST") return null;
+      // A plan describes one profile, so an unscoped preview has nothing to describe.
+      if (id === undefined) throw new ProfileQueryError("a plan applies to one profile");
+      const body = await readProfileBody(req);
+      if (!isObject(body)) throw new ProfileQueryError("preview body must be an object");
+      const operation = body.operation;
+      if (operation !== "apply" && operation !== "overwrite" && operation !== "disable" && operation !== "restore") {
+        throw new ProfileQueryError("operation must be apply, overwrite, disable or restore");
+      }
+      if (operation === "restore" && (typeof body.opId !== "string" || !body.opId.trim())) {
+        throw new ProfileQueryError("opId must be a non-empty string");
+      }
+      const roster = previewExportSnapshot(ctx.config);
+      if (roster === null) {
+        return jsonResponse({
+          error: "no model roster is cached yet, so this change cannot be planned",
+          code: "integration_preview_unavailable",
+        }, 409, req, ctx.config);
+      }
+      const plan = await previewAsideProfile({ ...options.input(), models: roster.models }, {
+        profileId: id,
+        operation,
+        ...(operation === "restore"
+          ? { opId: String(body.opId).trim(), confirmDrift: body.confirmDrift === true }
+          : {}),
+      });
+      return jsonResponse(plan, 200, req, ctx.config);
     }
     if (normalized.action === "restore") {
       if (req.method !== "POST") return null;
