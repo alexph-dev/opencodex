@@ -1254,4 +1254,36 @@ describe("integration previews are reads", () => {
     const body = await response.json() as { code: string };
     expect(body.code).toBe("integration_operation_not_found");
   });
+
+  test("a half-bound confirmation is rejected rather than quietly treated as unbound", async () => {
+    installHermes();
+    // Dropping one half would answer 200 to a caller who believed their confirmation was being
+    // checked, which is worse than refusing the request.
+    const onlyOperation = await api("/api/client-integrations/hermes", {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ enabled: true, operation: "apply" }),
+    });
+    expect(onlyOperation.status).toBe(400);
+    expect((await onlyOperation.json() as { code: string }).code).toBe("invalid_preview_binding");
+
+    const onlyFingerprint = await api("/api/client-integrations/hermes", {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ enabled: true, planFingerprint: "p1:whatever" }),
+    });
+    expect(onlyFingerprint.status).toBe(400);
+    expect((await onlyFingerprint.json() as { code: string }).code).toBe("invalid_preview_binding");
+  });
+
+  test("a confirmation naming a different operation than the request is not a confirmation of it", async () => {
+    installHermes();
+    const response = await api("/api/client-integrations/hermes", {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ enabled: false, operation: "apply", planFingerprint: "p1:whatever" }),
+    });
+    expect(response.status).toBe(400);
+    expect((await response.json() as { code: string }).code).toBe("invalid_preview_operation");
+  });
 });

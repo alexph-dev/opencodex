@@ -46,7 +46,11 @@ import { jsonResponse } from "../auth-cors";
 import { readManagementJsonBody, rethrowManagementBodyTooLarge } from "./body";
 import type { ManagementContext } from "./context";
 import { loadExportModels, previewExportModels } from "./model-rows";
-import { previewIntegration } from "../../integrations/mutation-plan";
+import {
+  previewIntegration,
+  type IntegrationPlanOperation,
+  type PreviewRequest,
+} from "../../integrations/mutation-plan";
 
 
 const INTEGRATION_ROUTE_PREFIX = "/api/client-integrations/";
@@ -311,6 +315,58 @@ function previewUnavailableResponse(ctx: ManagementContext): Response {
   return jsonResponse({
     error: "no model roster is cached yet, so this change cannot be planned",
     code: "integration_preview_unavailable",
+  }, 409, ctx.req, ctx.config);
+}
+
+/**
+ * A confirmed plan, or a reason the request cannot carry one.
+ *
+ * Both fields or neither. A half-bound request is rejected rather than quietly treated as
+ * unbound, because dropping one half would answer 200 to a caller who believed their
+ * confirmation was being checked.
+ */
+function planBindingOf(
+  body: Record<string, unknown>,
+): { operation: IntegrationPlanOperation; fingerprint: string } | "none" | "half" | "unknown-operation" {
+  const { operation, planFingerprint } = body;
+  if (operation === undefined && planFingerprint === undefined) return "none";
+  if (operation === undefined || typeof planFingerprint !== "string" || planFingerprint.length === 0) return "half";
+  if (operation !== "apply" && operation !== "overwrite" && operation !== "disable" && operation !== "restore") {
+    return "unknown-operation";
+  }
+  return { operation, fingerprint: planFingerprint };
+}
+
+function halfBoundResponse(ctx: ManagementContext): Response {
+  return jsonResponse({
+    error: "operation and planFingerprint must be sent together",
+    code: "invalid_preview_binding",
+  }, 400, ctx.req, ctx.config);
+}
+
+/**
+ * Re-plan and compare before the mutation runs.
+ *
+ * The fingerprint is an optimistic token, never authorization: management authentication and
+ * every ownership rule still apply. What it adds is that a confirmation stops meaning anything
+ * the moment the state it described moved, and the refusal carries a fresh plan so the operator
+ * decides again against what is true now.
+ */
+async function stalePlanResponse(
+  clientId: IntegrationClientId,
+  ctx: ManagementContext,
+  store: IntegrationStateStore,
+  request: PreviewRequest,
+  fingerprint: string,
+): Promise<Response | null> {
+  const input = await buildIntegrationPreviewInput(clientId, ctx, store);
+  if (!input) return previewUnavailableResponse(ctx);
+  const plan = previewIntegration(input, request);
+  if (plan.canApply && plan.fingerprint === fingerprint) return null;
+  return jsonResponse({
+    error: "integration preview is stale",
+    code: "integration_preview_stale",
+    plan,
   }, 409, ctx.req, ctx.config);
 }
 
@@ -694,6 +750,14 @@ export async function handleIntegrationRoutes(ctx: ManagementContext): Promise<R
 
     const opId = parsed.opId.trim();
     const confirmDrift = parsed.confirmDrift ?? false;
+    const restoreBinding = planBindingOf(parsed);
+    if (restoreBinding === "half") return halfBoundResponse(ctx);
+    if (restoreBinding === "unknown-operation" || (restoreBinding !== "none" && restoreBinding.operation !== "restore")) {
+      return jsonResponse({
+        error: "operation does not match the requested change",
+        code: "invalid_preview_operation",
+      }, 400, req, ctx.config);
+    }
     const asideRestore = await asideRestoreResponse(ctx, { opId, confirmDrift }, profileOptions);
     if (asideRestore) return asideRestore;
     let restoreClientId: IntegrationClientId | undefined;
@@ -718,6 +782,16 @@ export async function handleIntegrationRoutes(ctx: ManagementContext): Promise<R
       }
 
       const writeInput = await buildIntegrationWriteInput(operation.clientId, ctx, store);
+      if (restoreBinding !== "none") {
+        const stale = await stalePlanResponse(
+          operation.clientId,
+          ctx,
+          store,
+          { operation: "restore", opId, confirmDrift },
+          restoreBinding.fingerprint,
+        );
+        if (stale) return stale;
+      }
       const restoreInput: IntegrationRestoreInput = {
         ...writeInput,
         opId,
@@ -808,8 +882,26 @@ export async function handleIntegrationRoutes(ctx: ManagementContext): Promise<R
     }, 400, req, ctx.config);
   }
 
+  const requestedOperation: IntegrationPlanOperation = parsed.enabled
+    ? (parsed.overwriteConflict === true ? "overwrite" : "apply")
+    : "disable";
+  const binding = planBindingOf(parsed);
+  if (binding === "half") return halfBoundResponse(ctx);
+  if (binding === "unknown-operation" || (binding !== "none" && binding.operation !== requestedOperation)) {
+    // A confirmation that names a different operation than the request performs is not a
+    // confirmation of this request.
+    return jsonResponse({
+      error: "operation does not match the requested change",
+      code: "invalid_preview_operation",
+    }, 400, req, ctx.config);
+  }
+
   try {
     const input = await buildIntegrationWriteInput(requestedClient, ctx, integrationStore());
+    if (binding !== "none") {
+      const stale = await stalePlanResponse(requestedClient, ctx, integrationStore(), { operation: binding.operation }, binding.fingerprint);
+      if (stale) return stale;
+    }
     const result = await runIntegrationMutationFlight(
       requestedClient,
       parsed.enabled ? (parsed.overwriteConflict === true ? "overwrite" : "apply") : "disable",
