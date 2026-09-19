@@ -3,14 +3,16 @@ import { ClientPathError } from "../../clients/config-export";
 import { IntegrationMutationBusyError } from "../../integrations/mutation-flight";
 import { IntegrationWriterLockBusyError } from "../../integrations/writer-lock";
 import {
-  getAsideProfileState, listAsideProfileStates, mutateAsideProfiles, refreshAsideProfiles,
-  type AsideProfilesInput,
+  getAsideProfileState, listAsideProfileStates, mutateAsideProfiles, previewAsideProfile, refreshAsideProfiles,
+  type AsideProfilesInput, type AsideProfileWriteOutcome,
 } from "../../integrations/aside-profiles";
 import {
   listAsideOperations, findAsideOperation, restoreAsideProfile, deleteAsideOperation,
   asideOperationMatchesCurrent,
 } from "../../integrations/aside-profile-journal";
 import type { WriteRefused } from "../../integrations/writer";
+import type { IntegrationMutationPlan, IntegrationPlanOperation } from "../../integrations/mutation-plan";
+import { previewExportModels } from "./model-rows";
 import type { ManagementContext } from "./context";
 import { readManagementJsonBody, readOptionalManagementJsonBody, rethrowManagementBodyTooLarge } from "./body";
 import { jsonResponse } from "../auth-cors";
@@ -23,24 +25,66 @@ export interface AsideProfileRouteOptions {
 class ProfileQueryError extends Error { readonly status = 400; readonly code = "invalid_aside_profile"; }
 
 /**
- * Reject a preview binding the Aside routes cannot honour yet.
+ * The confirmed plan carried with this request, or null when there is none.
  *
- * Silently dropping the fields would be the worst of the three options: the caller believes their
- * confirmation is being checked, the mutation proceeds unchecked, and nothing says otherwise. The
- * profile-scoped plan owner these routes need does not exist yet, so a bound request is refused
- * outright until it does. Unbound callers, which is every caller today, are unaffected.
+ * Both fields or neither, and the operation must be the one being requested. Dropping a supplied
+ * binding would be the worst available behaviour: the caller believes their confirmation is being
+ * checked while the mutation proceeds unchecked.
  */
-function rejectUnsupportedBinding(
+function asideBinding(
   body: { operation?: unknown; planFingerprint?: unknown },
-  expected: string,
-): void {
+  expected: IntegrationPlanOperation,
+): { operation: IntegrationPlanOperation; fingerprint: string } | null {
   const { operation, planFingerprint } = body;
-  if (operation === undefined && planFingerprint === undefined) return;
+  if (operation === undefined && planFingerprint === undefined) return null;
   if (operation === undefined || typeof planFingerprint !== "string" || planFingerprint.length === 0) {
     throw new ProfileQueryError("operation and planFingerprint must be sent together");
   }
   if (operation !== expected) throw new ProfileQueryError("operation does not match the requested change");
-  throw new ProfileQueryError("a confirmed plan cannot be bound to an Aside profile change yet");
+  return { operation: expected, fingerprint: planFingerprint };
+}
+
+/**
+ * The guard a bound profile change runs before it writes anything.
+ *
+ * It re-plans the same profile scope and compares. The hooks that call it sit ahead of the
+ * preference write and the journal import, which is the only placement that helps here: those two
+ * happen before any writer lock is taken, so a check under that lock would fire after the thing it
+ * was meant to prevent.
+ */
+function asideGuardFor(
+  boundInput: AsideProfilesInput,
+  profileIdValue: number,
+  binding: { operation: IntegrationPlanOperation; fingerprint: string },
+  request: { opId?: string; confirmDrift?: boolean },
+  capture: { plan: IntegrationMutationPlan | null },
+): () => Promise<AsideProfileWriteOutcome | null> {
+  return async () => {
+    const plan = await previewAsideProfile(boundInput, {
+      profileId: profileIdValue,
+      operation: binding.operation,
+      ...(request.opId === undefined ? {} : { opId: request.opId }),
+      ...(request.confirmDrift === undefined ? {} : { confirmDrift: request.confirmDrift }),
+    });
+    if (plan.canApply && plan.fingerprint === binding.fingerprint) return null;
+    capture.plan = plan;
+    return {
+      ok: false,
+      reason: "conflict",
+      state: plan.state,
+      clientId: "aside",
+      message: "that confirmation no longer describes this profile",
+      profileId: profileIdValue,
+    };
+  };
+}
+
+function stalePlanResponse(ctx: ManagementContext, plan: IntegrationMutationPlan): Response {
+  return jsonResponse({
+    error: "integration preview is stale",
+    code: "integration_preview_stale",
+    plan,
+  }, 409, ctx.req, ctx.config);
 }
 
 const ASIDE_INTEGRATION_PATH = "/api/client-integrations/aside";
@@ -164,11 +208,34 @@ export async function handleAsideProfileRoutes(
     if (body.overwriteConflict === true && !body.enabled) throw new ProfileQueryError("overwriteConflict applies only to enabling an integration");
     // An exact profile is required before a binding could ever mean anything: one fingerprint
     // cannot honestly describe several independently changing files.
-    if (body.operation !== undefined || body.planFingerprint !== undefined) {
-      if (id === undefined) throw new ProfileQueryError("a confirmed plan applies to one profile");
-      rejectUnsupportedBinding(body, body.enabled ? (body.overwriteConflict === true ? "overwrite" : "apply") : "disable");
+    const expected: IntegrationPlanOperation = body.enabled
+      ? (body.overwriteConflict === true ? "overwrite" : "apply")
+      : "disable";
+    if ((body.operation !== undefined || body.planFingerprint !== undefined) && id === undefined) {
+      throw new ProfileQueryError("a confirmed plan applies to one profile");
     }
-    const batch = await mutateAsideProfiles(options.input(), { enabled: body.enabled, profileId: id, overwriteConflict: body.overwriteConflict === true });
+    const binding = asideBinding(body, expected);
+    const capture: { plan: IntegrationMutationPlan | null } = { plan: null };
+    let mutationInput = options.input();
+    let revalidate: (() => Promise<AsideProfileWriteOutcome | null>) | undefined;
+    if (binding !== null && id !== undefined) {
+      const roster = previewExportModels(ctx.config);
+      if (roster === null) {
+        return jsonResponse({
+          error: "no model roster is cached yet, so this change cannot be planned",
+          code: "integration_preview_unavailable",
+        }, 409, req, ctx.config);
+      }
+      // One roster for the guard and the mutation, so they cannot disagree by construction.
+      mutationInput = { ...mutationInput, models: roster };
+      revalidate = asideGuardFor(mutationInput, id, binding, {}, capture);
+    }
+    const batch = await mutateAsideProfiles(
+      mutationInput,
+      { enabled: body.enabled, profileId: id, overwriteConflict: body.overwriteConflict === true },
+      revalidate ? { revalidate } : undefined,
+    );
+    if (capture.plan) return stalePlanResponse(ctx, capture.plan);
     if (id !== undefined) {
       const result = batch.results[0];
       if (!result) throw new Error("Aside profile mutation returned no result");
@@ -232,11 +299,33 @@ export async function asideRestoreResponse(
       if (id === undefined) return null;
       return jsonResponse({ error: "integration operation not found", code: "integration_operation_not_found", opId: body.opId }, 404, ctx.req, ctx.config);
     }
-    if (body.operation !== undefined || body.planFingerprint !== undefined) {
-      if (id === undefined) throw new ProfileQueryError("a confirmed plan applies to one profile");
-      rejectUnsupportedBinding(body, "restore");
+    if ((body.operation !== undefined || body.planFingerprint !== undefined) && id === undefined) {
+      throw new ProfileQueryError("a confirmed plan applies to one profile");
     }
-    const result = await restoreAsideProfile(input, { ...body, profileId: operation.profileId });
+    const restoreBinding = asideBinding(body, "restore");
+    const capture: { plan: IntegrationMutationPlan | null } = { plan: null };
+    let restoreInput = input;
+    let revalidate: (() => Promise<AsideProfileWriteOutcome | null>) | undefined;
+    if (restoreBinding !== null) {
+      const roster = previewExportModels(ctx.config);
+      if (roster === null) {
+        return jsonResponse({
+          error: "no model roster is cached yet, so this change cannot be planned",
+          code: "integration_preview_unavailable",
+        }, 409, ctx.req, ctx.config);
+      }
+      restoreInput = { ...restoreInput, models: roster };
+      revalidate = asideGuardFor(restoreInput, operation.profileId, restoreBinding, {
+        opId: body.opId,
+        confirmDrift: body.confirmDrift === true,
+      }, capture);
+    }
+    const result = await restoreAsideProfile(
+      restoreInput,
+      { ...body, profileId: operation.profileId },
+      revalidate ? { revalidate } : undefined,
+    );
+    if (capture.plan) return stalePlanResponse(ctx, capture.plan);
     return result.ok ? jsonResponse(result, 200, ctx.req, ctx.config) : options.failure(result);
   } catch (error) {
     if (error instanceof ClientPathError && !ctx.url.searchParams.has("profile")
