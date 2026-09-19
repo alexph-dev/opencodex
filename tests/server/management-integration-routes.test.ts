@@ -1271,6 +1271,42 @@ describe("integration previews are reads", () => {
     expect(readFileSync(configPath, "utf8")).toBe(committed);
   });
 
+  test("a roster replaced while the lock is taken refuses instead of writing", async () => {
+    const configPath = installDsh();
+    resetExportSnapshotForTests();
+    await loadExportModels(config, []);
+
+    const preview = await previewApi("/api/client-integrations/preview", { clientId: "dsh", operation: "apply" });
+    expect(preview.status).toBe(200);
+    const plan = await preview.json() as { canApply: boolean; fingerprint: string };
+    expect(plan.canApply).toBe(true);
+    const before = existsSync(configPath) ? readFileSync(configPath, "utf8") : null;
+
+    /*
+     * Publishing a new roster as the lock is acquired puts the replacement exactly where it is
+     * hardest to notice: after the request captured its input and before the guard runs under the
+     * lock. A check that re-read the roster at that moment would validate the new one and write
+     * the old, which is the failure this ordering exists to make impossible.
+     */
+    const lockSeams: IntegrationWriterLockSeams = {
+      writeFile: async () => { await loadExportModels(config, []); },
+      removeFile: async () => {},
+      now: () => 0,
+      delay: async () => {},
+      pid: 12,
+    };
+    setIntegrationMutationFlightTestHooks({ store, lockSeams });
+
+    const commit = await api("/api/client-integrations/dsh", {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ enabled: true, operation: "apply", planFingerprint: plan.fingerprint }),
+    });
+    expect(commit.status).toBe(409);
+    expect((await commit.json() as { code: string }).code).toBe("integration_preview_stale");
+    expect(existsSync(configPath) ? readFileSync(configPath, "utf8") : null).toBe(before);
+  });
+
   test("a plan is refused before any planning when the request does not name a real operation", async () => {
     const badOperation = await previewApi("/api/client-integrations/preview", { clientId: "hermes", operation: "launch" });
     expect(badOperation.status).toBe(400);
