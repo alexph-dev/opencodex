@@ -8,9 +8,32 @@ import {
   type IntegrationPlanChange,
   type PlanFingerprintInput,
 } from "../../src/integrations/mutation-plan";
-import { EXPORT_CLIENTS, type ManagedContribution } from "../../src/clients/config-export";
+import {
+  EXPORT_CLIENTS,
+  EXPORT_CLIENT_IDS,
+  type ExportContext,
+  type ExportModel,
+  type ManagedContribution,
+} from "../../src/clients/config-export";
 import type { OwnershipRecord } from "../../src/integrations/ownership";
 import type { JournalEntry } from "../../src/integrations/journal";
+import type { OcxConfig } from "../../src/types";
+
+const FIXTURE_MODELS: ExportModel[] = [
+  { namespaced: "anthropic/claude-opus-4-8", provider: "anthropic", id: "claude-opus-4-8", contextWindow: 200_000 },
+  { namespaced: "gpt-5.5", provider: "openai", id: "gpt-5.5", native: true, contextWindow: 400_000 },
+];
+
+const FIXTURE_CONFIG: OcxConfig = {
+  port: 10100,
+  hostname: "127.0.0.1",
+  defaultProvider: "mock",
+  providers: { mock: { adapter: "openai-chat", baseUrl: "http://127.0.0.1/v1" } },
+} as OcxConfig;
+
+function fixtureContext(): ExportContext {
+  return { baseUrl: "http://127.0.0.1:10100/v1", models: FIXTURE_MODELS, config: FIXTURE_CONFIG };
+}
 
 const CONFIG_PATH = "/home/example/.cline/config.json";
 
@@ -88,11 +111,23 @@ describe("integration mutation plan projection", () => {
     expect(canonicalSchemaPath("cline", [])).toBeNull();
   });
 
-  test("every shipped client declares where its managed fragments live", () => {
-    for (const clientId of Object.keys(EXPORT_CLIENTS)) {
-      const templates = MANAGED_PATH_TEMPLATES[clientId as keyof typeof MANAGED_PATH_TEMPLATES];
-      expect(templates, clientId).toBeDefined();
-      expect(templates.length, clientId).toBeGreaterThan(0);
+  test("every path a shipped client actually writes canonicalizes through its own templates", () => {
+    // The declarations are a second copy of what the exporters do, so the only assertion worth
+    // making is against real builder output. A template list that merely exists proves nothing.
+    for (const clientId of EXPORT_CLIENT_IDS) {
+      expect(MANAGED_PATH_TEMPLATES[clientId].length, clientId).toBeGreaterThan(0);
+      const contribution = EXPORT_CLIENTS[clientId].buildContribution(fixtureContext());
+      expect(contribution.fragments.length, clientId).toBeGreaterThan(0);
+      for (const fragment of contribution.fragments) {
+        const canonical = canonicalSchemaPath(clientId, fragment.path);
+        expect(canonical, `${clientId}: ${fragment.path.join(".")}`).not.toBeNull();
+        // A dynamic position must not carry its observed value into the published path.
+        for (const segment of fragment.path) {
+          if (!MANAGED_PATH_TEMPLATES[clientId].some(template => template.includes(segment))) {
+            expect(canonical, `${clientId} leaked ${segment}`).not.toContain(segment);
+          }
+        }
+      }
     }
   });
 
