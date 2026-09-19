@@ -102,8 +102,10 @@ Authorization: Bearer <admin-token>
 `canApply` が真で `willChange` が偽なら、操作は成功しますが何も書き込みません。すでに適用済み
 のものを適用した場合などです。
 
-`integration_preview_unavailable` はモデル一覧がまだ用意されていない状態で、プロキシを起動した
-直後に現れます。`GET /api/client-integrations` を一度読めば用意されます。
+`integration_preview_unavailable` は今使えるモデル一覧がないという意味です。プロキシを起動した
+直後もそうですし、設定やプロバイダーキャッシュが変わって以前の一覧を破棄した場合もそうです。
+`GET /api/client-integrations` を読むと、取得に成功し設定を特定できたときに用意されるので、
+通常はこれで解決しますが、必ず用意されるとはかぎりません。
 
 ## プレビューした変更の確定
 

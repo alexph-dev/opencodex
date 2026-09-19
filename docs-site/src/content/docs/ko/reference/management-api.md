@@ -106,8 +106,10 @@ Authorization: Bearer <admin-token>
 `canApply`가 참인데 `willChange`가 거짓이면 작업은 성공하지만 아무것도 쓰지 않습니다. 이미
 적용된 것을 다시 적용하는 경우가 그렇습니다.
 
-`integration_preview_unavailable`은 아직 모델 목록이 준비되지 않았다는 뜻으로, 프록시를 막
-시작했을 때 나타납니다. `GET /api/client-integrations`를 한 번 읽으면 준비됩니다.
+`integration_preview_unavailable`은 지금 쓸 수 있는 모델 목록이 없다는 뜻입니다. 프록시를 막
+시작했을 때도 그렇고, 설정이나 공급자 캐시가 바뀌어 기존 목록을 버린 경우에도 그렇습니다.
+`GET /api/client-integrations`를 읽으면 조회가 성공하고 설정을 확인할 수 있을 때 목록이
+준비되므로, 보통은 이렇게 해결되지만 항상 보장되지는 않습니다.
 
 ## 미리 본 변경 확정하기
 

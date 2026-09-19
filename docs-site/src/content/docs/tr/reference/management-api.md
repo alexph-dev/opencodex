@@ -130,8 +130,10 @@ olarak görünür. Hiçbir yapılandırma değeri, dosya konumu veya seçilen ö
 `canApply` doğru ve `willChange` yanlışsa işlem başarılı olur ama hiçbir şey yazmaz; örneğin zaten
 uygulanmış olanı yeniden uygulamak.
 
-`integration_preview_unavailable`, henüz bir model listesinin oluşmadığını belirtir; yeni başlamış
-bir vekilin durumu budur. `GET /api/client-integrations` bir kez okunduğunda oluşur.
+`integration_preview_unavailable`, şu anda kullanılabilir bir model listesi tutulmadığını belirtir:
+yeni başlamış bir vekil bunun bir hâlidir, yapılandırma ya da sağlayıcı önbelleği değiştiği için
+bırakılmış bir liste de öyle. `GET /api/client-integrations` okunduğunda keşif başarılı olur ve
+yapılandırma belirlenebilirse liste oluşur; bu her zamanki çözümdür, bir güvence değildir.
 
 ## Önizlenen değişikliği onaylama
 

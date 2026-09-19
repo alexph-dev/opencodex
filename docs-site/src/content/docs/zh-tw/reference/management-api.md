@@ -101,8 +101,9 @@ Session 簽發在需要 data-plane 認證時停用，這包含遠端綁定。遠
 `canApply` 為真而 `willChange` 為假，表示操作會成功但不寫入任何內容，例如重複套用已經套用過
 的內容。
 
-`integration_preview_unavailable` 表示尚未建立模型清單，這是代理剛啟動時的狀態。讀取一次
-`GET /api/client-integrations` 即可建立。
+`integration_preview_unavailable` 表示目前沒有可用的模型清單：代理剛啟動是一種情況，因設定或
+供應方快取變動而捨棄原有清單也是一種情況。讀取 `GET /api/client-integrations` 會在探測成功
+且能確認設定時建立清單，因此這通常是解決方式，但並非必然建立。
 
 ## 確認已預覽的變更
 

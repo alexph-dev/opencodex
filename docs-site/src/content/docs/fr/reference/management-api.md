@@ -125,8 +125,11 @@ aucune identité d'élément sélectionné n'est renvoyé.
 `canApply` à vrai avec `willChange` à faux signifie que l'opération réussit sans rien écrire,
 par exemple appliquer ce qui est déjà appliqué.
 
-`integration_preview_unavailable` indique qu'aucune liste de modèles n'est encore établie, ce qui
-est l'état d'un proxy qui vient de démarrer. Lire `GET /api/client-integrations` l'établit.
+`integration_preview_unavailable` indique qu'aucune liste de modèles utilisable n'est actuellement
+conservée : un proxy qui vient de démarrer est un cas, une liste abandonnée parce que la
+configuration ou le cache de fournisseurs a changé en est un autre. Lire
+`GET /api/client-integrations` en établit une lorsque la découverte réussit et que la
+configuration peut être identifiée ; c'est le remède habituel, pas une garantie.
 
 ## Confirmer une modification prévisualisée
 

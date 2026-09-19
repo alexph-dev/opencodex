@@ -105,8 +105,9 @@ Authorization: Bearer <admin-token>
 `canApply` 为真而 `willChange` 为假，表示操作会成功但不写入任何内容，例如重复应用已经应用过
 的内容。
 
-`integration_preview_unavailable` 表示尚未建立模型清单，这是代理刚启动时的状态。读取一次
-`GET /api/client-integrations` 即可建立。
+`integration_preview_unavailable` 表示当前没有可用的模型清单：代理刚启动是一种情况，因配置或
+提供方缓存变化而弃用了原有清单也是一种情况。读取 `GET /api/client-integrations` 会在探测成功
+且能确认配置时建立清单，因此这通常是解决办法，但并非必然建立。
 
 ## 确认已预览的变更
 

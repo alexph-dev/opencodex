@@ -144,8 +144,11 @@ configuration value, file location or selected member identity is returned.
 `canApply: true` with `willChange: false` means the operation succeeds and writes nothing, such
 as applying what is already applied.
 
-`integration_preview_unavailable` means no model roster has been established yet, which is the
-state of a freshly started proxy. Reading `GET /api/client-integrations` establishes one.
+`integration_preview_unavailable` means no usable model roster is currently retained. A freshly
+started proxy is one way to be in that state; a roster retired because the configuration or the
+provider cache moved is another. Reading `GET /api/client-integrations` establishes one when
+discovery succeeds and the configuration can be identified, so it is the usual remedy rather than
+a guarantee.
 
 ## Confirming a previewed change
 

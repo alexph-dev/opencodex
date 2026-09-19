@@ -59,9 +59,11 @@ Preview and mutation differ in exactly two ways, and both are declared rather th
 Pending-prune maintenance and client transaction recovery each write, so they are explicit options
 with no default that a preview passes as false. And a preview takes its model roster from the
 retained export snapshot instead of gathering one, because discovery refreshes credentials and
-writes the provider cache. With no snapshot the request is refused; the Integrations collection
-read populates one, so the page an operator must open before confirming anything is the page that
-recovers it.
+writes the provider cache. With no usable snapshot the request is refused, which covers a cold
+process and equally a snapshot retired because the configuration or the provider cache moved. The
+Integrations collection read populates one when discovery succeeds and the configuration can be
+identified, so the page an operator opens before confirming anything is the usual way back rather
+than a guarantee.
 
 Each operation is decided the way that operation decides it. Apply checks installation and
 admission before the classifier and reports a conflict ahead of unsafe; disable asks neither,
