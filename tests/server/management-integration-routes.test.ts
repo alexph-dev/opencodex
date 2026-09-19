@@ -11,6 +11,7 @@ import { createIntegrationStateStore, type IntegrationStateStore } from "../../s
 import { applyIntegration } from "../../src/integrations/writer";
 import type { IntegrationWriterLockSeams } from "../../src/integrations/writer-lock";
 import { handleManagementAPI } from "../../src/server/management-api";
+import { loadExportModels, resetExportSnapshotForTests } from "../../src/server/management/model-rows";
 import {
   setIntegrationMutationFlightTestHooks,
   setIntegrationPathTestHooks,
@@ -1237,6 +1238,37 @@ describe("integration previews are reads", () => {
 
     const after = existsSync(configPath) ? readFileSync(configPath, "utf8") : null;
     expect(after).toBe(before);
+  });
+
+  test("a previewed change commits exactly once and then reports itself stale", async () => {
+    const configPath = installHermes();
+    resetExportSnapshotForTests();
+    // A preview reads only a roster an authoritative load already finished, so give it one.
+    await loadExportModels(config, []);
+
+    const preview = await previewApi("/api/client-integrations/preview", { clientId: "hermes", operation: "apply" });
+    expect(preview.status).toBe(200);
+    const plan = await preview.json() as { canApply: boolean; fingerprint: string };
+    expect(plan.canApply).toBe(true);
+
+    const commit = await api("/api/client-integrations/hermes", {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ enabled: true, operation: "apply", planFingerprint: plan.fingerprint }),
+    });
+    expect(commit.status).toBe(200);
+    const committed = readFileSync(configPath, "utf8");
+
+    // The same confirmation replayed now describes a file that no longer exists in that state.
+    // Without a real fingerprint comparison this would apply a second time.
+    const replay = await api("/api/client-integrations/hermes", {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ enabled: true, operation: "apply", planFingerprint: plan.fingerprint }),
+    });
+    expect(replay.status).toBe(409);
+    expect((await replay.json() as { code: string }).code).toBe("integration_preview_stale");
+    expect(readFileSync(configPath, "utf8")).toBe(committed);
   });
 
   test("a plan is refused before any planning when the request does not name a real operation", async () => {
