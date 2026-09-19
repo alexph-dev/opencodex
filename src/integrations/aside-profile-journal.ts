@@ -167,11 +167,20 @@ function importOperation(row: AsideOperation, scope: AsideProfileScope): void {
 
 export function restoreAsideProfile(
   input: AsideProfilesInput,
-  request: { opId: string; profileId?: number; confirmDrift?: boolean },
+  request: {
+    opId: string;
+    profileId?: number;
+    confirmDrift?: boolean;
+    /**
+     * The row a caller already selected. Aside can hold more than one valid copy, so resolving
+     * again here could act on a different one than the plan the operator confirmed described.
+     */
+    selectedOperation?: AsideOperation;
+  },
   options?: { revalidate?: () => Promise<AsideProfileWriteOutcome | null> },
 ): Promise<AsideProfileWriteOutcome> {
   return runAsideProfileAction<AsideProfileWriteOutcome>(input, request.profileId, `restore:${request.opId}:${Boolean(request.confirmDrift)}`, async ctx => {
-    const row = requiredOperation(ctx, request.opId, request.profileId);
+    const row = request.selectedOperation ?? requiredOperation(ctx, request.opId, request.profileId);
     const profile = selectAsideProfiles(ctx, row.profileId)[0]!;
     const scope = asideProfileScope(ctx, profile);
     assertAsideSnapshotEntry(row.entry);

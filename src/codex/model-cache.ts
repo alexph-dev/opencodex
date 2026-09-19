@@ -193,13 +193,18 @@ export function isModelCacheGenerationCurrent(provider: string, generation: stri
  * one cannot alter what a later capture or publication sees.
  */
 const providerCacheRevisions = new Map<string, number>();
+let globalContentRevision = 0;
 
 function bumpProviderCacheRevision(provider: string): void {
   providerCacheRevisions.set(provider, (providerCacheRevisions.get(provider) ?? 0) + 1);
 }
 
 export function observeModelCacheRevision(provider: string): string {
-  return `${providerCacheRevisions.get(provider) ?? 0}`;
+  // The global term covers a clear that empties the map wholesale, which per-provider counters
+  // cannot express: without it, wiping every entry and republishing identical-looking rows would
+  // read as unchanged. It also survives pruning, so a retired provider cannot come back with a
+  // counter that matches a roster built before it left.
+  return `${globalContentRevision}:${providerCacheRevisions.get(provider) ?? 0}`;
 }
 
 /**
@@ -247,6 +252,11 @@ export function clearModelCache(
   } else {
     if (revokesInFlightDiscovery) globalCacheGeneration += 1;
     cache.clear();
+    // A wholesale clear changes every provider's content at once, and clearing the map means no
+    // per-provider counter can record it. Advancing the global term retires every derived roster
+    // and lets the per-provider entries be dropped without an ABA on the way back.
+    globalContentRevision += 1;
+    providerCacheRevisions.clear();
     cacheBytes = 0;
     oldestCachedProvider = undefined;
     oldestCachedAt = null;

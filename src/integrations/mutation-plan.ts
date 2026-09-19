@@ -465,9 +465,9 @@ export function observeRestore(
    * operation the confirmation was never about. A caller that has resolved one passes it in, and
    * neither side resolves again.
    */
-  resolved?: { entry: JournalEntry; store: IntegrationStateStore },
+  selectedOperation?: { entry: JournalEntry; store: IntegrationStateStore },
 ) {
-  const store = resolved?.store ?? input.store ?? createIntegrationStateStore();
+  const store = selectedOperation?.store ?? input.store ?? createIntegrationStateStore();
   let io = input.io ?? defaultIntegrationIO(store);
   const clientId = input.clientId;
   let resolved: { configPath: string; detectDir: string };
@@ -484,7 +484,7 @@ export function observeRestore(
       failed: observationFailure("unsafe", "unsafe", "the client home is missing; restore will not create it"),
     } as const;
   }
-  const entry = resolved?.entry ?? store.findOperation(opId);
+  const entry = selectedOperation?.entry ?? store.findOperation(opId);
   if (!entry || entry.clientId !== clientId) {
     return { failed: observationFailure("unsafe", "unsafe", "that operation cannot be undone") } as const;
   }

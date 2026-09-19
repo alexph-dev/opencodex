@@ -372,7 +372,9 @@ export async function asideRestoreResponse(
     }
     const result = await restoreAsideProfile(
       restoreInput,
-      { ...body, profileId: operation.profileId },
+      // The same row the preview and guard used. Letting the mutation resolve its own copy is how
+      // a confirmation ends up bound to an operation other than the one that runs.
+      { ...body, profileId: operation.profileId, selectedOperation: operation },
       revalidate ? { revalidate } : undefined,
     );
     if (capture.plan) return stalePlanResponse(ctx, capture.plan);
