@@ -46,7 +46,7 @@ import {
 import { jsonResponse } from "../auth-cors";
 import { readManagementJsonBody, rethrowManagementBodyTooLarge } from "./body";
 import type { ManagementContext } from "./context";
-import { exportSnapshotIdentity, loadExportModels, previewExportModels } from "./model-rows";
+import { exportSnapshotIdentity, loadExportModels, previewExportSnapshot } from "./model-rows";
 import {
   previewIntegration,
   type IntegrationMutationPlan,
@@ -265,19 +265,22 @@ async function buildIntegrationPreviewInput(
   clientId: IntegrationClientId,
   ctx: ManagementContext,
   store: IntegrationStateStore,
-): Promise<IntegrationWriteInput | null> {
-  const models = previewExportModels(ctx.config);
+): Promise<{ input: IntegrationWriteInput; identity: string } | null> {
+  const snapshot = previewExportSnapshot(ctx.config);
   // No cached roster means no honest snapshot to plan against. Gathering one here would make a
   // read refresh credentials and write the provider cache, which is the thing preview must not do.
-  if (models === null) return null;
+  if (snapshot === null) return null;
   return {
-    clientId,
-    models,
-    config: ctx.config,
-    port: Number(ctx.url.port) || ctx.config.port,
-    store,
-    io: integrationMutationTestHooks?.io,
-    ...pathOverrides(),
+    identity: snapshot.identity,
+    input: {
+      clientId,
+      models: snapshot.models,
+      config: ctx.config,
+      port: Number(ctx.url.port) || ctx.config.port,
+      store,
+      io: integrationMutationTestHooks?.io,
+      ...pathOverrides(),
+    },
   };
 }
 
@@ -377,7 +380,7 @@ function stalePlanGuard(
        */
       if (exportSnapshotIdentity(ctx.config) !== capturedIdentity) {
         const refreshed = await buildIntegrationPreviewInput(clientId, ctx, store);
-        stale = refreshed === null ? "unavailable" : previewIntegration(refreshed, request);
+        stale = refreshed === null ? "unavailable" : previewIntegration(refreshed.input, request);
         return { ok: false, reason: "conflict", state: "conflict", clientId, message: "the model roster changed while confirming" };
       }
       const plan = previewIntegration(frozen, request);
@@ -711,9 +714,9 @@ export async function handleIntegrationRoutes(ctx: ManagementContext): Promise<R
       }, 400, req, ctx.config);
     }
     try {
-      const input = await buildIntegrationPreviewInput(previewClient as IntegrationClientId, ctx, integrationStore());
-      if (!input) return previewUnavailableResponse(ctx);
-      return jsonResponse(previewIntegration(input, { operation }), 200, req, ctx.config);
+      const captured = await buildIntegrationPreviewInput(previewClient as IntegrationClientId, ctx, integrationStore());
+      if (!captured) return previewUnavailableResponse(ctx);
+      return jsonResponse(previewIntegration(captured.input, { operation }), 200, req, ctx.config);
     } catch (error) {
       return internalErrorResponse(error, ctx);
     }
@@ -745,9 +748,9 @@ export async function handleIntegrationRoutes(ctx: ManagementContext): Promise<R
           opId,
         }, 404, req, ctx.config);
       }
-      const input = await buildIntegrationPreviewInput(operation.clientId, ctx, store);
-      if (!input) return previewUnavailableResponse(ctx);
-      const plan = previewIntegration(input, {
+      const captured = await buildIntegrationPreviewInput(operation.clientId, ctx, store);
+      if (!captured) return previewUnavailableResponse(ctx);
+      const plan = previewIntegration(captured.input, {
         operation: "restore",
         opId,
         confirmDrift: parsed.confirmDrift ?? false,
@@ -815,17 +818,20 @@ export async function handleIntegrationRoutes(ctx: ManagementContext): Promise<R
         }, 410, req, ctx.config);
       }
 
-      const writeInput = restoreBinding === "none"
-        ? await buildIntegrationWriteInput(operation.clientId, ctx, store)
+      const boundRestore = restoreBinding === "none"
+        ? null
         : await buildIntegrationPreviewInput(operation.clientId, ctx, store);
-      if (!writeInput) return previewUnavailableResponse(ctx);
+      if (restoreBinding !== "none" && boundRestore === null) return previewUnavailableResponse(ctx);
+      const writeInput = boundRestore
+        ? boundRestore.input
+        : await buildIntegrationWriteInput(operation.clientId, ctx, store);
       const restoreGuard = restoreBinding === "none" ? null : stalePlanGuard(
         operation.clientId,
         ctx,
         store,
       { operation: "restore", opId, confirmDrift },
       restoreBinding.fingerprint,
-        exportSnapshotIdentity(ctx.config),
+        boundRestore === null ? null : boundRestore.identity,
     );
       const restoreInput: IntegrationRestoreInput = {
         ...writeInput,
@@ -941,17 +947,20 @@ export async function handleIntegrationRoutes(ctx: ManagementContext): Promise<R
      * have had the mutation and its own confirmation check disagree about the roster by
      * construction, which is the disagreement this binding exists to detect.
      */
-    const input = binding === "none"
-      ? await buildIntegrationWriteInput(requestedClient, ctx, integrationStore())
+    const boundToggle = binding === "none"
+      ? null
       : await buildIntegrationPreviewInput(requestedClient, ctx, integrationStore());
-    if (!input) return previewUnavailableResponse(ctx);
+    if (binding !== "none" && boundToggle === null) return previewUnavailableResponse(ctx);
+    const input = boundToggle
+      ? boundToggle.input
+      : await buildIntegrationWriteInput(requestedClient, ctx, integrationStore());
     const guard = binding === "none" ? null : stalePlanGuard(
       requestedClient,
       ctx,
       integrationStore(),
       { operation: binding.operation },
       binding.fingerprint,
-      exportSnapshotIdentity(ctx.config),
+      boundToggle === null ? null : boundToggle.identity,
     );
     const result = await runIntegrationMutationFlight(
       requestedClient,

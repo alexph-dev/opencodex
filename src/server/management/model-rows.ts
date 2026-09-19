@@ -324,8 +324,17 @@ export function resetExportSnapshotForTests(): void {
  * has a cached roster there is no honest snapshot to plan against, and the caller reports a
  * bounded refusal rather than triggering a gather to manufacture one.
  */
-export function previewExportModels(config: OcxConfig): readonly ExportModel[] | null {
+export function previewExportSnapshot(
+  config: OcxConfig,
+): { models: readonly ExportModel[]; identity: string } | null {
+  // One synchronous read of one const. Taking the roster and its identity in two steps let a
+  // concurrent load publish a new snapshot between them, so a caller could hold one roster while
+  // believing it held the identity of another.
   const snapshot = lastExportSnapshot;
   if (snapshot === null || snapshot.key !== exportSnapshotKey(config)) return null;
-  return snapshot.models;
+  return { models: snapshot.models, identity: `${snapshot.key}:${snapshot.generation}` };
+}
+
+export function previewExportModels(config: OcxConfig): readonly ExportModel[] | null {
+  return previewExportSnapshot(config)?.models ?? null;
 }
