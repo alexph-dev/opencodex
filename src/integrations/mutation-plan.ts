@@ -15,9 +15,14 @@
  */
 import { createHash } from "node:crypto";
 import { canonicalContribution, fingerprint, type OwnershipRecord } from "./ownership";
-import type { ExportModel, ManagedContribution } from "../clients/config-export";
-import type { IntegrationClientId } from "./registry";
-import type { IntegrationState } from "./state";
+import { ClientPathError, EXPORT_CLIENTS, type ExportModel, type ManagedContribution } from "../clients/config-export";
+import { createClineIO, ClineTransactionError } from "./cline-io";
+import { parseClineDocument } from "./cline-document";
+import { PARSE_FAILED, defaultIntegrationIO, loadTarget, parseConfig, type IntegrationIO } from "./config-io";
+import { INTEGRATION_CLIENTS, resolveIntegrationPaths, type IntegrationClientId } from "./registry";
+import { classifyIntegration, exportContextOf, type IntegrationState } from "./state";
+import { createIntegrationStateStore, type IntegrationStateStore } from "./store";
+import type { OcxConfig } from "../types";
 import type { JournalEntry } from "./journal";
 
 /**
@@ -188,4 +193,132 @@ export function planFingerprint(input: PlanFingerprintInput): string {
     ],
   ];
   return `${PLAN_FINGERPRINT_VERSION}:${digest(JSON.stringify(components))}`;
+}
+
+/**
+ * What a mutation is asked to do. Declared here because the observation below consumes it and the
+ * planner must not depend on the writer; the writer re-exports it, so callers are unaffected.
+ */
+export interface IntegrationWriteInput {
+  clientId: IntegrationClientId;
+  models: readonly ExportModel[];
+  config: OcxConfig;
+  port: number;
+  env?: NodeJS.ProcessEnv;
+  home?: string;
+  store?: IntegrationStateStore;
+  io?: IntegrationIO;
+  /** Frozen once by the async coordinator; synchronous callers may omit it. */
+  resolvedPaths?: { configPath: string; detectDir: string };
+}
+
+/** A refusal in the planner's own vocabulary, so observation does not depend on the writer's result type. */
+export interface IntegrationObservationFailure {
+  readonly reason: RefusalReason;
+  readonly state: IntegrationState;
+  readonly message: string;
+  readonly snapshotPath?: string;
+  /** A Cline transaction left residue that only a mutation may clear. */
+  readonly residual?: boolean;
+}
+
+function observationFailure(
+  reason: RefusalReason,
+  state: IntegrationState,
+  message: string,
+  snapshotPath?: string,
+): IntegrationObservationFailure {
+  return { reason, state, message, ...(snapshotPath ? { snapshotPath } : {}) };
+}
+
+/**
+ * What preview and mutation are allowed to touch while looking.
+ *
+ * Both are false for a preview and both are true for a mutation, and neither defaults, because the
+ * difference is the whole safety argument. `maintenance` runs pending snapshot pruning, which
+ * writes; `recover` lets the Cline adapter repair a pending transaction, which also writes. A
+ * preview that quietly inherited either would be a mutation wearing a read's name.
+ */
+export interface ObservationEffects {
+  readonly maintenance: boolean;
+  readonly recover: boolean;
+}
+
+/**
+ * Detect, gate, read, parse and classify, once, for both preview and mutation.
+ *
+ * Extracted from the writer so a plan and the mutation it authorizes rest on the same
+ * classification rather than two independent reads that can disagree. The ordering of refusals is
+ * load-bearing and is preserved exactly as the writer had it.
+ */
+export function observeIntegration(input: IntegrationWriteInput, effects: ObservationEffects) {
+  const store = input.store ?? createIntegrationStateStore();
+  let io = input.io ?? defaultIntegrationIO(store);
+  const clientId = input.clientId;
+  const spec = INTEGRATION_CLIENTS[clientId];
+  const exportSpec = EXPORT_CLIENTS[clientId];
+  /*
+   * Resolution itself can refuse: a relative OPENCLAW_* selector is rejected
+   * because we cannot know the gateway's working directory. That is a refusal
+   * about the user's configuration, not an internal fault, so it must not
+   * escape as an exception — the collection route would answer 500 for the
+   * whole Integrations page because one client is misconfigured.
+   */
+  let configPath: string;
+  let detectDir: string;
+  try {
+    /*
+     * Resolve the PAIR, never one half.
+     *
+     * The coordinated path hands us a frozen pair, but applyIntegration,
+     * refreshIntegration and disableIntegration are public and may be called
+     * without one. Resolving configPath here and detectDir separately later let
+     * an Aside account switch land between the two, so a direct apply could
+     * verify account 1 was installed and then write account 0's catalog.
+     */
+    const resolved = input.resolvedPaths ?? resolveIntegrationPaths(clientId, input.env, input.home);
+    configPath = resolved.configPath;
+    detectDir = resolved.detectDir;
+    if (clientId === "cline") io = createClineIO(io, configPath, store, effects.recover);
+  } catch (error) {
+    if (error instanceof ClineTransactionError) {
+      return { failed: { ...observationFailure("unsafe", "unsafe", error.message, error.snapshotPath), residual: true } } as const;
+    }
+    if (!(error instanceof ClientPathError)) throw error;
+    return { failed: observationFailure("unsafe", "unsafe", error.message) } as const;
+  }
+  // Pruning writes, so only a mutation may perform it. Preview reports the state it finds.
+  if (effects.maintenance) store.retryPendingPrunes();
+
+  const target = loadTarget(io, configPath);
+  if (!target.ok) {
+    return {
+      failed: observationFailure("unsafe", "unsafe",
+        target.why === "read-failed"
+          ? `${configPath} exists but could not be read`
+          : `${configPath} is not a regular file`),
+    } as const;
+  }
+  const before = target.before;
+  const parsed = clientId === "cline" ? parseClineDocument(before) : parseConfig(before, exportSpec.format);
+  if (parsed === PARSE_FAILED) {
+    return { failed: observationFailure("unsafe", "unsafe",
+      `${configPath} could not be parsed, or holds something opencodex cannot rewrite without changing it (a non-finite number, a large integer or a tiny one a rewrite would round, -0, a duplicate member, or nesting deeper than 1000 levels)`) } as const;
+  }
+  const contribution = exportSpec.buildContribution(exportContextOf(input));
+  // A record proves ownership of the file it was written FOR. Matching only by
+  // client id let a record for one home authorize a write to another whose
+  // bytes happened to hash the same — which deleted a config we never touched.
+  const stored = store.readRecords()[clientId] ?? null;
+  const record = stored && stored.clientId === clientId && stored.configPath === configPath
+    ? stored
+    : null;
+  // `configPath`/`clientId` are load-bearing, not decoration: a record proves
+  // ownership of ONE file, and the writer mutates whatever path resolves NOW.
+  // Without them a record written for another home directory would grant
+  // ownership here and disable would delete fragments it never wrote.
+  const classified = classifyIntegration({
+    fileText: before, fileIsRegular: true, parsed, record, contribution, configPath, clientId,
+  });
+  return { failed: undefined, store, io, clientId, spec, exportSpec, configPath, detectDir, before, parsed, contribution, record, classified } as const;
 }
