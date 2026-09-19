@@ -45,7 +45,8 @@ import {
 import { jsonResponse } from "../auth-cors";
 import { readManagementJsonBody, rethrowManagementBodyTooLarge } from "./body";
 import type { ManagementContext } from "./context";
-import { loadExportModels } from "./model-rows";
+import { loadExportModels, previewExportModels } from "./model-rows";
+import { previewIntegration } from "../../integrations/mutation-plan";
 
 
 const INTEGRATION_ROUTE_PREFIX = "/api/client-integrations/";
@@ -238,6 +239,30 @@ async function buildIntegrationWriteInput(
   return {
     clientId,
     models: await loadExportModels(ctx.config),
+    config: ctx.config,
+    port: Number(ctx.url.port) || ctx.config.port,
+    store,
+    io: integrationMutationTestHooks?.io,
+    ...pathOverrides(),
+  };
+}
+
+/**
+ * The same input a mutation would build, from the read-only roster.
+ *
+ * It differs from the mutation's in exactly one way, and the difference is deliberate: the roster
+ * comes from `previewExportModels`, which gathers without running the initial-selection finalizer
+ * that persists configuration. Everything else is shared, so a preview and the commit that follows
+ * it cannot disagree for any reason except the state genuinely moving.
+ */
+async function buildIntegrationPreviewInput(
+  clientId: IntegrationClientId,
+  ctx: ManagementContext,
+  store: IntegrationStateStore,
+): Promise<IntegrationWriteInput> {
+  return {
+    clientId,
+    models: await previewExportModels(ctx.config),
     config: ctx.config,
     port: Number(ctx.url.port) || ctx.config.port,
     store,
@@ -560,6 +585,71 @@ export async function handleIntegrationRoutes(ctx: ManagementContext): Promise<R
         }
       }
       return jsonResponse({ operations } satisfies IntegrationJournalEnvelope, 200, req, ctx.config);
+    } catch (error) {
+      return internalErrorResponse(error, ctx);
+    }
+  }
+
+  if (url.pathname === "/api/client-integrations/preview") {
+    if (req.method !== "POST") return null;
+    const parsed = await readJsonBody(ctx);
+    if (parsed instanceof Response) return parsed;
+    if (!isPlainRecord(parsed)) {
+      return jsonResponse({ error: "preview body must be an object", code: "invalid_preview_body" }, 400, req, ctx.config);
+    }
+    const previewClient = parsed.clientId;
+    if (typeof previewClient !== "string"
+      || !(INTEGRATION_CLIENT_IDS as readonly string[]).includes(previewClient)) {
+      return invalidClientResponse(ctx);
+    }
+    const operation = parsed.operation;
+    if (operation !== "apply" && operation !== "overwrite" && operation !== "disable") {
+      return jsonResponse({
+        error: "operation must be apply, overwrite or disable",
+        code: "invalid_preview_operation",
+      }, 400, req, ctx.config);
+    }
+    try {
+      const input = await buildIntegrationPreviewInput(previewClient as IntegrationClientId, ctx, integrationStore());
+      return jsonResponse(previewIntegration(input, { operation }), 200, req, ctx.config);
+    } catch (error) {
+      return internalErrorResponse(error, ctx);
+    }
+  }
+
+  if (url.pathname === "/api/client-integrations/restore/preview") {
+    if (req.method !== "POST") return null;
+    const parsed = await readJsonBody(ctx);
+    if (parsed instanceof Response) return parsed;
+    if (!isPlainRecord(parsed) || typeof parsed.opId !== "string" || parsed.opId.trim().length === 0) {
+      return jsonResponse({ error: "opId must be a non-empty string", code: "invalid_op_id" }, 400, req, ctx.config);
+    }
+    if (parsed.confirmDrift !== undefined && typeof parsed.confirmDrift !== "boolean") {
+      return jsonResponse({ error: "confirmDrift must be a boolean", code: "invalid_confirm_drift" }, 400, req, ctx.config);
+    }
+    const opId = parsed.opId.trim();
+    try {
+      const store = integrationStore();
+      const operation = store.findOperation(opId);
+      /*
+       * Answered as "not found" rather than by reading the row back to the caller. A preview is
+       * reached before any confirmation, so it is the cheapest place to probe journal contents,
+       * and it declines to be one.
+       */
+      if (!operation) {
+        return jsonResponse({
+          error: "integration operation not found",
+          code: "integration_operation_not_found",
+          opId,
+        }, 404, req, ctx.config);
+      }
+      const input = await buildIntegrationPreviewInput(operation.clientId, ctx, store);
+      const plan = previewIntegration(input, {
+        operation: "restore",
+        opId,
+        confirmDrift: parsed.confirmDrift ?? false,
+      });
+      return jsonResponse(plan, 200, req, ctx.config);
     } catch (error) {
       return internalErrorResponse(error, ctx);
     }

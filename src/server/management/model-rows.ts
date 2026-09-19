@@ -256,3 +256,22 @@ export async function loadExportModels(
   const visibleRouted = new Set(filterCatalogVisibleModels(rows.filter(row => !row.native), config));
   return rows.filter(row => !row.disabled && (row.native || visibleRouted.has(row))).map(toExportModel);
 }
+
+/**
+ * The export roster for a read that must not change anything.
+ *
+ * `fetchAllModels` is discovery plus the initial-selection finalizer, and that finalizer reaches
+ * `mutatePersistedConfig`. Writing the user's configuration because somebody opened a dialog is
+ * not acceptable, so this gathers directly and skips the finalizer. It also skips the entitlement
+ * freshness wait, which exists to make a picker current and has no business blocking a read for
+ * three seconds.
+ *
+ * Discovery itself still runs, through the same TTL-cached path the models list already uses on
+ * every Integrations page load, so this is not a new class of work on a read — only the writing
+ * part is removed. The roster is fingerprinted into the plan, so a commit that would be built
+ * from a different one is refused rather than silently applied.
+ */
+export async function previewExportModels(config: OcxConfig): Promise<ExportModel[]> {
+  const { gatherRoutedModels } = await import("../../codex/catalog");
+  return loadExportModels(config, await gatherRoutedModels(config));
+}
