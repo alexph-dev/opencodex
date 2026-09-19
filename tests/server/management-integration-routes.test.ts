@@ -1336,7 +1336,7 @@ describe("integration previews are reads", () => {
       body: JSON.stringify({ enabled: true }),
     });
     expect(applied.status).toBe(200);
-    const afterApply = readFileSync(configPath, "utf8");
+    expect(existsSync(configPath)).toBe(true);
 
     const opId = store.listOperations("hermes")[0]?.opId;
     expect(opId).toBeDefined();
@@ -1353,7 +1353,15 @@ describe("integration previews are reads", () => {
       body: JSON.stringify({ opId, operation: "restore", planFingerprint: plan.fingerprint }),
     });
     expect(undo.status).toBe(200);
-    expect(readFileSync(configPath, "utf8")).not.toBe(afterApply);
+    /*
+     * Hermes has no config file before the apply, so the snapshot that apply took is "none" and a
+     * successful undo DELETES the file rather than rewriting it. Reading bytes back here was
+     * wrong: the file is gone, and the evidence that the undo happened lives in the journal.
+     */
+    expect(existsSync(configPath)).toBe(false);
+    const rows = store.listOperations("hermes");
+    expect(rows.some(row => row.kind === "restore")).toBe(true);
+    expect(rows.some(row => row.opId === opId)).toBe(true);
   });
 
   test("a plan is refused before any planning when the request does not name a real operation", async () => {
