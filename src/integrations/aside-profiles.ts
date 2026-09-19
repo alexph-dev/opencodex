@@ -104,12 +104,32 @@ export async function getAsideProfileState(input: AsideProfilesInput, id: number
 export function mutateAsideProfiles(
   input: AsideProfilesInput,
   change: { enabled: boolean; profileId?: number; overwriteConflict?: boolean },
+  options?: { revalidate?: () => Promise<AsideProfileWriteOutcome | null> },
 ): Promise<AsideProfileMutationResult> {
   return runAsideProfileAction<AsideProfileMutationResult>(input, change.profileId, `${change.enabled ? "enable" : "disable"}:${Boolean(change.overwriteConflict)}`, async (ctx, profiles) => {
     const refused = new Map<number, AsideProfileWriteOutcome>();
     for (const profile of profiles) {
       try { asideProfileScope(ctx, profile); }
       catch (error) { refused.set(profile.id, asideProfileFailure(profile.id, error)); }
+    }
+    /*
+     * A confirmation is checked HERE, not under the writer lock.
+     *
+     * The await below persists the user's Aside preference before any writer runs, so a check
+     * that waited for the lock would fire after the thing it was meant to prevent. Profile and
+     * path selection is frozen by this point, which is everything the check needs.
+     */
+    const stale = await options?.revalidate?.();
+    if (stale) {
+      return {
+        ok: false,
+        clientId: "aside",
+        changed: false,
+        state: "conflict",
+        message: "that confirmation no longer describes this profile",
+        results: [stale],
+        result: stale,
+      };
     }
     // This await precedes model loading, writer preflight, snapshots and all client writes.
     await persistAsidePolicy(ctx, change);
