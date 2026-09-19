@@ -133,7 +133,14 @@ export async function handleAsideProfileRoutes(
       const body = await readProfileBody(req);
       if (!isObject(body) || typeof body.opId !== "string" || !body.opId.trim()
         || (body.confirmDrift !== undefined && typeof body.confirmDrift !== "boolean")) throw new ProfileQueryError("Invalid Aside restore request");
-      return asideRestoreResponse(ctx, { opId: body.opId.trim(), confirmDrift: body.confirmDrift === true }, options);
+      // Rebuilding the body here previously dropped any binding, so a bound nested restore
+      // reached the writer with its confirmation unexamined. Forward the fields as sent.
+      return asideRestoreResponse(ctx, {
+        opId: body.opId.trim(),
+        confirmDrift: body.confirmDrift === true,
+        ...(body.operation === undefined ? {} : { operation: body.operation }),
+        ...(body.planFingerprint === undefined ? {} : { planFingerprint: body.planFingerprint }),
+      }, options);
     }
     if (url.pathname === "/api/client-integrations/aside/sync") {
       if (req.method !== "POST") return null;
