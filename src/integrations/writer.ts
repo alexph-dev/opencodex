@@ -36,6 +36,7 @@ import type { IntegrationState } from "./state";
 import { serializeDocument, UnserializableValueError } from "./serialize";
 import { ClientPathError } from "../clients/config-export";
 import { matchesOperationResult, newOpId, type JournalEntry } from "./journal";
+import type { RefusalReason } from "./mutation-plan";
 import { createIntegrationStateStore, type IntegrationStateStore } from "./store";
 import {
   patchYamlFragmentSource,
@@ -62,14 +63,12 @@ function yamlRefusalReason(
 }
 import { withIntegrationWriterLock, type IntegrationWriterLockSeams } from "./writer-lock";
 
-export type RefusalReason =
-  | "not_installed"
-  | "conflict"
-  | "unsafe"
-  | "non_loopback"
-  | "drift_requires_confirm"
-  | "snapshot_expired"
-  | "write_failed";
+/**
+ * Owned by the planner so a plan can report a refusal without depending on the writer, and
+ * re-exported here because this module was its original home and every caller imports it from
+ * the writer.
+ */
+export type { RefusalReason };
 
 export interface WriteOk {
   ok: true;
