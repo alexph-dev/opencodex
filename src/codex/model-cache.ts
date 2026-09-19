@@ -293,13 +293,15 @@ export function reconcileModelCacheProviders(
     }
     providerCacheGenerations.set(provider, (providerCacheGenerations.get(provider) ?? 0) + 1);
     providerCacheGenerations.delete(provider);
-    // Dropped rather than left behind: a provider the configuration no longer has must not keep
-    // an entry alive for the life of the process merely because nothing cleared the whole cache.
-    providerCacheRevisions.delete(provider);
     deleteCachedProvider(provider);
     failureAt.delete(provider);
     discoveryStatus.delete(provider);
     liveModelCounts.delete(provider);
+    // AFTER the cache deletion, which bumps this provider's revision and would otherwise recreate
+    // the entry we just removed. Dropped rather than left behind: a provider the configuration no
+    // longer has must not keep an entry alive for the life of the process merely because nothing
+    // cleared the whole cache. The global epoch advanced above, so the removal is not an ABA.
+    providerCacheRevisions.delete(provider);
     removedProviders.add(provider);
   }
   lastReconciledGeneration = generation;
