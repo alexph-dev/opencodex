@@ -9,8 +9,8 @@
  * Bodies are unchanged from their previous home; only `export` was added.
  */
 import type { CatalogModel } from "../../codex/catalog";
-import { createHash } from "node:crypto";
 import { observeModelCacheRevision } from "../../codex/model-cache";
+import { readConfigAdmissionSnapshot } from "../../config/diagnostics";
 import {
   catalogModelSlug,
   filterCatalogVisibleModels,
@@ -263,8 +263,14 @@ export async function loadExportModels(
   // A deep clone, not a frozen view of the caller's array. Freezing the array alone left the model
   // objects shared, so a caller mutating one in place would have silently rewritten the roster a
   // later preview plans against, and the fingerprint would have moved with it.
+  const configKey = exportSnapshotKey(config);
+  // No provable configuration identity means no honest snapshot to keep.
+  if (configKey === null) {
+    lastExportSnapshot = null;
+    return exported;
+  }
   lastExportSnapshot = {
-    key: exportSnapshotKey(config),
+    key: configKey,
     cacheStamp: modelCacheStamp(config),
     generation: ++exportSnapshotGeneration,
     models: Object.freeze(structuredClone(exported)),
@@ -317,20 +323,30 @@ function modelCacheStamp(config: OcxConfig): string {
 export function exportSnapshotIdentity(config: OcxConfig): string | null {
   const snapshot = lastExportSnapshot;
   if (snapshot === null) return null;
-  if (snapshot.key !== exportSnapshotKey(config)) return null;
+  const configKey = exportSnapshotKey(config);
+  if (configKey === null || snapshot.key !== configKey) return null;
   if (snapshot.cacheStamp !== modelCacheStamp(config)) return null;
   return `${snapshot.key}:${snapshot.generation}`;
 }
 
-function exportSnapshotKey(config: OcxConfig): string {
-  const providers = Object.entries(config.providers ?? {})
-    .map(([name, provider]) => [name, provider.adapter, provider.baseUrl])
-    .sort((left, right) => String(left[0]) < String(right[0]) ? -1 : 1);
-  return createHash("sha256").update(JSON.stringify({
-    providers,
-    disabled: config.disabledModels ?? [],
-    custom: config.customModels ?? [],
-  })).digest("hex").slice(0, 32);
+/**
+ * What configuration this roster was derived under, or null when that cannot be established.
+ *
+ * A hand-written list of the fields that seemed to matter was the wrong instrument: it is only as
+ * complete as whoever last thought about it, and a field it forgets is a roster change nothing
+ * notices. The admission snapshot hashes the configuration file in the same read it parses, so it
+ * covers every field without anyone maintaining a list.
+ *
+ * Null when the file cannot be read. That is deliberate and fails closed: with no way to say which
+ * configuration a roster belongs to, there is no honest snapshot to keep or to serve.
+ *
+ * Known residual, not closed by this: the digest describes the file on disk, and the roster was
+ * built from an in-memory configuration that a caller supplied. Proving those two are the same
+ * needs the admitted configuration to carry its own revision, which is separate work.
+ */
+function exportSnapshotKey(_config: OcxConfig): string | null {
+  const snapshot = readConfigAdmissionSnapshot();
+  return snapshot.contentSha256;
 }
 
 /** Test seam: a fresh process has no snapshot, and suites must be able to reproduce that. */
@@ -358,7 +374,8 @@ export function previewExportSnapshot(
   // believing it held the identity of another.
   const snapshot = lastExportSnapshot;
   if (snapshot === null) return null;
-  if (snapshot.key !== exportSnapshotKey(config)) return null;
+  const configKey = exportSnapshotKey(config);
+  if (configKey === null || snapshot.key !== configKey) return null;
   // A completed discovery retires the snapshot: the configuration is unchanged, but the models it
   // resolves to are not the ones this roster was built from.
   if (snapshot.cacheStamp !== modelCacheStamp(config)) return null;
