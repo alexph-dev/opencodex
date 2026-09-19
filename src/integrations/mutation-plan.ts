@@ -21,7 +21,7 @@ import { createClineIO, ClineTransactionError } from "./cline-io";
 import { parseClineDocument } from "./cline-document";
 import { PARSE_FAILED, defaultIntegrationIO, loadTarget, parseConfig, type IntegrationIO } from "./config-io";
 import { INTEGRATION_CLIENTS, resolveIntegrationPaths, type IntegrationClientId } from "./registry";
-import { classifyIntegration, exportContextOf, type IntegrationState } from "./state";
+import { classifyIntegration, exportContextOf, type IntegrationState, type StateReason } from "./state";
 import { createIntegrationStateStore, type IntegrationStateStore } from "./store";
 import type { OcxConfig } from "../types";
 import type { JournalEntry } from "./journal";
@@ -208,6 +208,12 @@ export interface PlanFingerprintInput {
     /** Digest of the snapshot's exact text, or null when it holds none. */
     readonly snapshotText: string | null;
     readonly confirmDrift: boolean;
+    /**
+     * Whether the target has changed since the operation being undone, which is the
+     * drift_requires_confirm predicate. Passed in rather than recomputed so the plan and the
+     * mutation read drift from the same comparison.
+     */
+    readonly driftsFromResult: boolean;
   };
 }
 
@@ -246,9 +252,109 @@ export function planFingerprint(input: PlanFingerprintInput): string {
       restore.snapshotKind,
       restore.snapshotText === null ? "\u0000none" : fingerprint(restore.snapshotText),
       restore.confirmDrift,
+      restore.driftsFromResult,
     ],
   ];
   return `${PLAN_FINGERPRINT_VERSION}:${digest(JSON.stringify(components))}`;
+}
+
+/** The observation facts a plan is derived from, beside the fingerprint inputs. */
+export interface PlanInput extends PlanFingerprintInput {
+  readonly classified: { readonly state: IntegrationState; readonly reason?: StateReason };
+}
+
+function foreignEditOf(input: PlanInput): IntegrationPlanForeignEdit {
+  if (input.restore?.driftsFromResult) return "drift";
+  if (input.classified.reason === "unowned-key") return "unowned";
+  if (input.classified.reason === "foreign-edit") return "foreign-edit";
+  return "none";
+}
+
+/**
+ * Why this operation would refuse, in the writer's own order.
+ *
+ * The order is not cosmetic. An uninstalled client is reported as not installed rather than as
+ * whatever its leftover file happens to classify as, and an unreadable or unparseable file is
+ * reported before either, because that is the sequence the writer itself refuses in. A plan that
+ * named a different reason than the mutation would name is worse than no plan.
+ */
+function refusalOf(input: PlanInput): RefusalReason | undefined {
+  if (input.classified.state === "unsafe") return "unsafe";
+  if (input.installKind !== "dir") return "not_installed";
+  if (input.admissionBlocked) return "non_loopback";
+  if (input.operation === "restore") {
+    if (input.restore === undefined) return "unsafe";
+    if (input.restore.snapshotKind === "expired") return "snapshot_expired";
+    if (input.restore.driftsFromResult && !input.restore.confirmDrift) return "drift_requires_confirm";
+    return undefined;
+  }
+  // Overwrite exists precisely to proceed through a conflict the operator has been shown.
+  if (input.classified.state === "conflict" && input.operation !== "overwrite") return "conflict";
+  return undefined;
+}
+
+function ownedPath(record: OwnershipRecord | null, path: readonly string[]): boolean {
+  return (record?.fragmentPaths ?? []).some(owned =>
+    owned.length === path.length && owned.every((segment, index) => segment === path[index]));
+}
+
+/**
+ * The managed places this operation would touch, plus the history it would write.
+ *
+ * A path that does not canonicalize is omitted rather than guessed at. For a shipped client that
+ * cannot happen, and the parity case proves it; what it does cover is a record written by another
+ * version, where declining to describe a path is the honest answer and the fixed ownership entry
+ * still tells the operator that ownership changes.
+ */
+function changesOf(input: PlanInput): readonly IntegrationPlanChange[] {
+  const changes: IntegrationPlanChange[] = [];
+  if (input.operation === "apply" || input.operation === "overwrite") {
+    for (const fragment of input.contribution?.fragments ?? []) {
+      const path = canonicalSchemaPath(input.clientId, fragment.path);
+      if (path === null) continue;
+      changes.push({ kind: ownedPath(input.record, fragment.path) ? "replace" : "add", path });
+    }
+  }
+  if (input.operation === "disable" || input.operation === "restore") {
+    for (const owned of input.record?.fragmentPaths ?? []) {
+      const path = canonicalSchemaPath(input.clientId, owned);
+      if (path === null) continue;
+      changes.push({ kind: "remove", path });
+    }
+  }
+  if (input.operation === "restore") {
+    for (const fragment of input.restore?.entry.priorRecord?.fragmentPaths ?? []) {
+      const path = canonicalSchemaPath(input.clientId, fragment);
+      if (path === null) continue;
+      changes.push({ kind: "replace", path });
+    }
+  }
+  changes.push({ kind: "snapshot", path: PLAN_SNAPSHOT_PATH });
+  changes.push({ kind: "ownership", path: PLAN_OWNERSHIP_PATH });
+  changes.push({ kind: "journal", path: PLAN_JOURNAL_PATH });
+  return orderPlanChanges(changes);
+}
+
+/**
+ * The whole plan, value-free.
+ *
+ * A refused plan is still worth returning: knowing that undo is blocked because the backup expired
+ * is the answer an operator needs, and it carries no more detail than an allowed one.
+ */
+export function buildMutationPlan(input: PlanInput): IntegrationMutationPlan {
+  const refusalReason = refusalOf(input);
+  return Object.freeze({
+    version: 1 as const,
+    clientId: input.clientId,
+    operation: input.operation,
+    state: input.classified.state,
+    foreignEdit: foreignEditOf(input),
+    changes: refusalReason === undefined ? changesOf(input) : Object.freeze([]),
+    fingerprint: planFingerprint(input),
+    canApply: refusalReason === undefined,
+    ...(refusalReason === undefined ? {} : { refusalReason }),
+    ...(input.profileId === undefined ? {} : { profileId: input.profileId }),
+  });
 }
 
 /**

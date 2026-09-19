@@ -2,10 +2,12 @@ import { describe, expect, test } from "bun:test";
 import {
   MANAGED_PATH_TEMPLATES,
   PLAN_CHANGE_LIMIT,
+  buildMutationPlan,
   canonicalSchemaPath,
   orderPlanChanges,
   planFingerprint,
   type IntegrationPlanChange,
+  type PlanInput,
   type PlanFingerprintInput,
 } from "../../src/integrations/mutation-plan";
 import {
@@ -47,9 +49,14 @@ const RECORD: OwnershipRecord = {
   opId: "op-base",
 };
 
+const CANARY = "canary-value-must-not-be-published";
+
 const CONTRIBUTION: ManagedContribution = {
   clientId: "cline",
-  fragments: [{ path: ["providers", "opencodex"], value: { baseUrl: "http://127.0.0.1:10100" } }],
+  fragments: [
+    { path: ["settings", "providers", "opencodex"], value: { baseUrl: "http://127.0.0.1:10100", apiKey: CANARY } },
+    { path: ["catalog", "providers", "opencodex"], value: { models: [CANARY] } },
+  ],
 };
 
 const ENTRY: JournalEntry = {
@@ -83,6 +90,7 @@ const RESTORE: NonNullable<PlanFingerprintInput["restore"]> = {
   snapshotKind: "stored",
   snapshotText: "{\"a\":1}",
   confirmDrift: false,
+  driftsFromResult: false,
 };
 
 const RESTORE_BASE: PlanFingerprintInput = { ...BASE, operation: "restore", restore: RESTORE };
@@ -212,7 +220,69 @@ describe("integration plan fingerprint", () => {
       { ...RESTORE_BASE, restore: { ...RESTORE, snapshotText: "{\"a\":2}" } },
       { ...RESTORE_BASE, restore: { ...RESTORE, snapshotText: null } },
       { ...RESTORE_BASE, restore: { ...RESTORE, confirmDrift: true } },
+      { ...RESTORE_BASE, restore: { ...RESTORE, driftsFromResult: true } },
     ];
     expect(new Set(variants.map(planFingerprint)).size).toBe(variants.length);
+  });
+});
+
+const PLAN_BASE: PlanInput = { ...BASE, classified: { state: "absent" } };
+
+describe("integration mutation plan", () => {
+  test("an allowed apply names every managed place and the history it writes", () => {
+    const plan = buildMutationPlan(PLAN_BASE);
+    expect(plan.canApply).toBe(true);
+    expect(plan.refusalReason).toBeUndefined();
+    expect(plan.changes).toEqual([
+      { kind: "add", path: "catalog.providers.opencodex" },
+      { kind: "add", path: "settings.providers.opencodex" },
+      { kind: "snapshot", path: "$snapshot" },
+      { kind: "ownership", path: "$ownership" },
+      { kind: "journal", path: "$journal" },
+    ]);
+  });
+
+  test("a previously owned place is a replacement rather than an addition", () => {
+    const plan = buildMutationPlan({
+      ...PLAN_BASE,
+      classified: { state: "stale" },
+      record: { ...RECORD, fragmentPaths: [["settings", "providers", "opencodex"]] },
+    });
+    expect(plan.changes).toContainEqual({ kind: "replace", path: "settings.providers.opencodex" });
+    expect(plan.changes).toContainEqual({ kind: "add", path: "catalog.providers.opencodex" });
+  });
+
+  test("no configured value reaches the plan", () => {
+    const plan = buildMutationPlan(PLAN_BASE);
+    expect(JSON.stringify(plan)).not.toContain(CANARY);
+    expect(JSON.stringify(plan)).not.toContain(CONFIG_PATH);
+  });
+
+  test("refusals follow the writer's order and report no places", () => {
+    // Unsafe is decided before the install check, exactly as the writer refuses.
+    expect(buildMutationPlan({ ...PLAN_BASE, classified: { state: "unsafe", reason: "unparseable" }, installKind: "missing" }).refusalReason)
+      .toBe("unsafe");
+    expect(buildMutationPlan({ ...PLAN_BASE, installKind: "missing" }).refusalReason).toBe("not_installed");
+    expect(buildMutationPlan({ ...PLAN_BASE, admissionBlocked: true }).refusalReason).toBe("non_loopback");
+    const refused = buildMutationPlan({ ...PLAN_BASE, installKind: "missing" });
+    expect(refused.canApply).toBe(false);
+    expect(refused.changes).toEqual([]);
+  });
+
+  test("overwrite is the operation allowed through a conflict", () => {
+    const conflicted: PlanInput = { ...PLAN_BASE, classified: { state: "conflict", reason: "foreign-edit" } };
+    expect(buildMutationPlan(conflicted).refusalReason).toBe("conflict");
+    expect(buildMutationPlan({ ...conflicted, operation: "overwrite" }).canApply).toBe(true);
+    expect(buildMutationPlan(conflicted).foreignEdit).toBe("foreign-edit");
+  });
+
+  test("restore reports an expired backup and unconfirmed drift", () => {
+    const plan: PlanInput = { ...RESTORE_BASE, classified: { state: "current" } };
+    expect(buildMutationPlan({ ...plan, restore: { ...RESTORE, snapshotKind: "expired" } }).refusalReason)
+      .toBe("snapshot_expired");
+    const drifted = buildMutationPlan({ ...plan, restore: { ...RESTORE, driftsFromResult: true } });
+    expect(drifted.refusalReason).toBe("drift_requires_confirm");
+    expect(drifted.foreignEdit).toBe("drift");
+    expect(buildMutationPlan({ ...plan, restore: { ...RESTORE, driftsFromResult: true, confirmDrift: true } }).canApply).toBe(true);
   });
 });
