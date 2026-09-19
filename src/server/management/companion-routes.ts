@@ -10,7 +10,12 @@ import type { ManagementContext } from "./context";
 
 function response(): Response {
   const loaded = loadCompanionSettings();
-  return jsonResponse({ settings: loaded.settings, updatedAt: loaded.updatedAt, defaults: DEFAULT_COMPANION_SETTINGS });
+  return jsonResponse({
+    settings: loaded.settings,
+    updatedAt: loaded.updatedAt,
+    defaults: DEFAULT_COMPANION_SETTINGS,
+    ...(loaded.corrupt ? { corrupt: true } : {}),
+  });
 }
 
 export async function handleCompanionRoutes(ctx: ManagementContext): Promise<Response | null> {

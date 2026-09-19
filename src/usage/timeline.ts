@@ -158,7 +158,7 @@ export function createTimelineAccumulator(query: TimelineQuery): { add(entry: Pe
   }
 
   function finish(): UsageTimeline {
-    const rows = [...series].map(([id, state]): TimelineSeries => {
+    const rows = [...series].map(([id, state]): { row: TimelineSeries; state: SeriesState } => {
       if (query.aggregation !== "sum") {
         for (const [bucket, requests] of state.requests) {
           const values = [...requests.values()];
@@ -169,19 +169,34 @@ export function createTimelineAccumulator(query: TimelineQuery): { add(entry: Pe
       }
       const total = state.points.reduce((sum, value) => sum + value, 0);
       return {
-        id,
-        provider: state.provider,
-        model: state.model,
-        ...(state.accountLogLabel !== undefined ? { accountLogLabel: state.accountLogLabel } : {}),
-        total,
-        points: state.points,
+        row: {
+          id,
+          provider: state.provider,
+          model: state.model,
+          ...(state.accountLogLabel !== undefined ? { accountLogLabel: state.accountLogLabel } : {}),
+          total,
+          points: state.points,
+        },
+        state,
       };
-    }).sort((left, right) => right.total - left.total || left.id.localeCompare(right.id));
-    const kept = rows.length > 24 ? rows.slice(0, 23) : rows;
+    }).sort((left, right) => right.row.total - left.row.total || left.row.id.localeCompare(right.row.id));
+    const kept = (rows.length > 24 ? rows.slice(0, 23) : rows).map(({ row }) => row);
     if (rows.length > 24) {
       const otherPoints = Array<number>(buckets).fill(0);
-      for (const row of rows.slice(23)) {
-        for (let index = 0; index < buckets; index += 1) otherPoints[index] = (otherPoints[index] ?? 0) + (row.points[index] ?? 0);
+      const folded = rows.slice(23);
+      if (query.aggregation === "sum") {
+        for (const { row } of folded) {
+          for (let index = 0; index < buckets; index += 1) otherPoints[index] = (otherPoints[index] ?? 0) + (row.points[index] ?? 0);
+        }
+      } else {
+        for (let index = 0; index < buckets; index += 1) {
+          const values = folded.flatMap(({ state }) => [...(state.requests.get(index)?.values() ?? [])]);
+          if (values.length > 0) {
+            otherPoints[index] = query.aggregation === "max"
+              ? Math.max(...values)
+              : values.reduce((sum, value) => sum + value, 0) / values.length;
+          }
+        }
       }
       kept.push({ id: "other", provider: "", model: "other", total: otherPoints.reduce((sum, value) => sum + value, 0), points: otherPoints });
     }

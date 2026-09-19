@@ -96,4 +96,22 @@ describe("usage timeline", () => {
     expect(result.series).toHaveLength(24);
     expect(result.series.at(-1)?.id).toBe("other");
   });
+
+  test("folds other rows with request-level max and average", () => {
+    const make = (aggregation: "average" | "max") => {
+      const query = parseTimelineQuery(new URLSearchParams(`hours=6&aggregation=${aggregation}`), now);
+      if ("error" in query) throw new Error(query.error);
+      const acc = createTimelineAccumulator(query);
+      for (let index = 0; index < 25; index += 1) {
+        acc.add(entry({
+          requestId: `request-${index}`,
+          model: `model-${index}`,
+          totalTokens: index < 23 ? 100 + index : index - 22,
+        }));
+      }
+      return acc.finish().series.at(-1);
+    };
+    expect(make("max")?.points.at(-1)).toBe(2);
+    expect(make("average")?.points.at(-1)).toBe(1.5);
+  });
 });

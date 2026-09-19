@@ -106,16 +106,16 @@ export function applyCompanionSettingsPatch(
   return { ...current, ...values } as CompanionSettings;
 }
 
-export function loadCompanionSettings(): { settings: CompanionSettings; updatedAt: number | null } {
+export function loadCompanionSettings(): { settings: CompanionSettings; updatedAt: number | null; corrupt?: true } {
   const path = companionSettingsPath();
   if (!existsSync(path)) return { settings: { ...DEFAULT_COMPANION_SETTINGS }, updatedAt: null };
   try {
     const parsed = JSON.parse(readFileSync(path, "utf8")) as unknown;
     const settings = applyCompanionSettingsPatch(DEFAULT_COMPANION_SETTINGS, parsed);
-    if ("error" in settings) return { settings: { ...DEFAULT_COMPANION_SETTINGS }, updatedAt: null };
+    if ("error" in settings) return { settings: { ...DEFAULT_COMPANION_SETTINGS }, updatedAt: null, corrupt: true };
     return { settings, updatedAt: statSync(path).mtimeMs };
   } catch {
-    return { settings: { ...DEFAULT_COMPANION_SETTINGS }, updatedAt: null };
+    return { settings: { ...DEFAULT_COMPANION_SETTINGS }, updatedAt: null, corrupt: true };
   }
 }
 

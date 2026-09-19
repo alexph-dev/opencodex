@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -38,6 +38,7 @@ describe("companion settings", () => {
       expect(loadCompanionSettings().settings).toEqual(DEFAULT_COMPANION_SETTINGS);
       writeFileSync(join(home, "companion.json"), "{");
       expect(loadCompanionSettings().settings).toEqual(DEFAULT_COMPANION_SETTINGS);
+      expect(loadCompanionSettings().corrupt).toBe(true);
       expect(applyCompanionSettingsPatch(DEFAULT_COMPANION_SETTINGS, { unknown: true })).toEqual({ error: expect.any(String) });
       expect(applyCompanionSettingsPatch(DEFAULT_COMPANION_SETTINGS, { menuBarTemplate: "x".repeat(201) })).toEqual({ error: expect.any(String) });
       const updated = applyCompanionSettingsPatch(DEFAULT_COMPANION_SETTINGS, { showChart: false });
@@ -53,6 +54,16 @@ describe("companion settings", () => {
       expect((await call("PUT", { settings: { showToday: false } })).body.settings.showToday).toBe(false);
       expect((await call("PUT", { reset: true })).body.settings).toEqual(DEFAULT_COMPANION_SETTINGS);
       expect((await call("PUT", { settings: { bad: true } })).status).toBe(400);
+    });
+  });
+
+  test("GET reports corrupt persisted settings without overwriting them", async () => {
+    await withHome(async home => {
+      writeFileSync(join(home, "companion.json"), "{");
+      const result = await call("GET");
+      expect(result.status).toBe(200);
+      expect(result.body.corrupt).toBe(true);
+      expect(readFileSync(join(home, "companion.json"), "utf8")).toBe("{");
     });
   });
 });

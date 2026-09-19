@@ -553,6 +553,9 @@ Inspect and configure menu-bar and widget companion usage settings.
 
 JSON mode: `payload`.
 
+- `show` (the default) reads settings; `set key=value ...` updates selected settings; `reset` restores defaults.
+- Values accepted by `set` are parsed as JSON when valid, so booleans, numbers, arrays, objects, and null can be passed directly.
+
 ### `ocx account main reauth`
 
 Reauthenticate the native main Codex login with a device code (#3898); headless hubs need no Codex App or keyring.

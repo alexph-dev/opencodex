@@ -13,15 +13,15 @@ export async function handleUsageTimelineRoutes(ctx: ManagementContext): Promise
   if ("error" in query) return jsonResponse(query, 400, req, ctx.config);
   const bucketMs = query.bucketMinutes * 60_000;
   const roundedNow = Math.floor(query.now / bucketMs) * bucketMs;
-  const key = JSON.stringify({ ...query, now: roundedNow });
+  const normalized = { ...query, now: roundedNow };
+  const key = JSON.stringify(normalized);
   const current = Date.now();
   const cached = cache.get(key);
   if (cached && cached.expiresAt > current) return jsonResponse(await cached.promise, 200, req, ctx.config);
   let promise: Promise<ReturnType<ReturnType<typeof createTimelineAccumulator>["finish"]>>;
   promise = (async () => {
-    const accumulator = createTimelineAccumulator(query);
+    const accumulator = createTimelineAccumulator(normalized);
     const snapshot = await readUsageSnapshotForManagement(ctx.config.managementUsageMaxReadBytes);
-    if (req.signal.aborted) throw req.signal.reason ?? new Error("usage timeline request aborted");
     for (const entry of snapshot.entries) accumulator.add(entry);
     return {
       ...accumulator.finish(),

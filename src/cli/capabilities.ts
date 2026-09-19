@@ -325,6 +325,10 @@ export const CAPABILITIES: readonly Capability[] = [
     flags: [{ name: "--json", value: "boolean", summary: "Emit companion settings as JSON." }],
     mutates: true,
     json: "payload",
+    details: [
+      "`show` (the default) reads settings; `set key=value ...` updates selected settings; `reset` restores defaults.",
+      "Values accepted by `set` are parsed as JSON when valid, so booleans, numbers, arrays, objects, and null can be passed directly.",
+    ],
   },
   {
     command: ["account", "history"],

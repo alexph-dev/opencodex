@@ -300,8 +300,13 @@ export const CLI_COMMANDS: CliCommandEntry[] = [
   },
   {
     name: "companion",
-    usage: "ocx companion [--json]",
-    summary: "Inspect menu-bar and widget companion usage settings.",
+    usage: "ocx companion <show|set|reset> ...",
+    summary: "Inspect and configure menu-bar and widget companion usage settings.",
+    details: [
+      "ocx companion and ocx companion show read settings; use --json for machine-readable output.",
+      "ocx companion set accepts one or more key=value assignments; values are parsed as JSON when possible.",
+      "ocx companion reset restores the default settings.",
+    ],
   },
   {
     name: "combo",

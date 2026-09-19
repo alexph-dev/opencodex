@@ -783,16 +783,8 @@ const commandRunners: Record<string, CommandRunner> = {
     return await handleComboCommand(deps.args.slice(1));
   },
   companion: async deps => {
-    const { printData, runtimeRequest, takeFlag } = await import("./runtime-api");
-    const args = deps.args.slice(1);
-    const wantsJson = takeFlag(args, "--json");
-    if (args.length) {
-      console.error("Usage: ocx companion [--json]");
-      return 64;
-    }
-    const payload = await runtimeRequest("/api/companion/settings");
-    printData(payload, wantsJson);
-    return 0;
+    const { handleCompanionCommand } = await import("./companion");
+    return await handleCompanionCommand(deps.args.slice(1));
   },
   route: async deps => {
     if (deps.args[1] !== "combo" && deps.args[1] !== "policy") {
