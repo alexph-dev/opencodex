@@ -22,6 +22,24 @@ export interface AsideProfileRouteOptions {
 
 class ProfileQueryError extends Error { readonly status = 400; readonly code = "invalid_aside_profile"; }
 
+/**
+ * Reject a preview binding the Aside routes cannot honour yet.
+ *
+ * Silently dropping the fields would be the worst of the three options: the caller believes their
+ * confirmation is being checked, the mutation proceeds unchecked, and nothing says otherwise. The
+ * profile-scoped plan owner these routes need does not exist yet, so a bound request is refused
+ * outright until it does. Unbound callers, which is every caller today, are unaffected.
+ */
+function rejectUnsupportedBinding(body: Record<string, unknown>, expected: string): void {
+  const { operation, planFingerprint } = body;
+  if (operation === undefined && planFingerprint === undefined) return;
+  if (operation === undefined || typeof planFingerprint !== "string" || planFingerprint.length === 0) {
+    throw new ProfileQueryError("operation and planFingerprint must be sent together");
+  }
+  if (operation !== expected) throw new ProfileQueryError("operation does not match the requested change");
+  throw new ProfileQueryError("a confirmed plan cannot be bound to an Aside profile change yet");
+}
+
 const ASIDE_INTEGRATION_PATH = "/api/client-integrations/aside";
 const ASIDE_PROFILES_PATH = "/api/client-integrations/aside/profiles";
 
@@ -134,6 +152,12 @@ export async function handleAsideProfileRoutes(
     if (!isObject(body) || typeof body.enabled !== "boolean") throw new ProfileQueryError("enabled must be a boolean");
     if (body.overwriteConflict !== undefined && typeof body.overwriteConflict !== "boolean") throw new ProfileQueryError("overwriteConflict must be a boolean");
     if (body.overwriteConflict === true && !body.enabled) throw new ProfileQueryError("overwriteConflict applies only to enabling an integration");
+    // An exact profile is required before a binding could ever mean anything: one fingerprint
+    // cannot honestly describe several independently changing files.
+    if (body.operation !== undefined || body.planFingerprint !== undefined) {
+      if (id === undefined) throw new ProfileQueryError("a confirmed plan applies to one profile");
+      rejectUnsupportedBinding(body, body.enabled ? (body.overwriteConflict === true ? "overwrite" : "apply") : "disable");
+    }
     const batch = await mutateAsideProfiles(options.input(), { enabled: body.enabled, profileId: id, overwriteConflict: body.overwriteConflict === true });
     if (id !== undefined) {
       const result = batch.results[0];
@@ -195,6 +219,10 @@ export async function asideRestoreResponse(
     if (!operation) {
       if (id === undefined) return null;
       return jsonResponse({ error: "integration operation not found", code: "integration_operation_not_found", opId: body.opId }, 404, ctx.req, ctx.config);
+    }
+    if (body.operation !== undefined || body.planFingerprint !== undefined) {
+      if (id === undefined) throw new ProfileQueryError("a confirmed plan applies to one profile");
+      rejectUnsupportedBinding(body, "restore");
     }
     const result = await restoreAsideProfile(input, { ...body, profileId: operation.profileId });
     return result.ok ? jsonResponse(result, 200, ctx.req, ctx.config) : options.failure(result);
