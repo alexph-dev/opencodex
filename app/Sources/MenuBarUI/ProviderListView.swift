@@ -86,7 +86,7 @@ public final class ProviderListView: NSView {
             view.removeFromSuperview()
         }
 
-        for provider in snapshot.providers.sorted(by: { $0.name < $1.name }) {
+        for provider in snapshot.visibleProviders.sorted(by: { $0.name < $1.name }) {
             let isDefault = provider.name == snapshot.defaultProvider
             let row = ProviderRowView(
                 provider: provider,
@@ -239,6 +239,7 @@ package extension ProviderListView {
 
     func isToggleOn(_ name: String) -> Bool? { row(name)?.isOn }
     func isToggleEnabled(_ name: String) -> Bool? { row(name)?.isToggleEnabled }
+    func hasProviderForTesting(_ name: String) -> Bool { row(name) != nil }
 
     private func row(_ name: String) -> ProviderRowView? {
         for case let row as ProviderRowView in providerRows where row.providerName == name {

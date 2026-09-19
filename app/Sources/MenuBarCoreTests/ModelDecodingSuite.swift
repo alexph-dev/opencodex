@@ -120,7 +120,7 @@ enum ModelDecodingSuite {
 
         t.test("usage: the range enum is closed") {
             t.isNil(UsageRange(rawValue: "24h"), "UsageRange(24h)")
-            t.equal(UsageRange.allCases.map(\.rawValue), ["7d", "30d", "all"])
+            t.equal(UsageRange.allCases.map(\.rawValue), ["today", "7d", "30d", "all"])
         }
 
         // The decisive trap: openai sends weeklyResetAt in SECONDS (1785258443) while

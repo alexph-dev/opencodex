@@ -65,7 +65,7 @@ enum PollingSuite {
             StubProtocol.reset([.init(status: 200, body: healthOK, urlError: nil)])
             let coordinator = makeCoordinator()
             sync { await coordinator.refresh() }
-            t.equal(paths(), ["/api/startup-health"])
+            t.equal(paths(), ["/api/startup-health", "/api/companion/settings", "/api/usage", "/api/usage/timeline"])
         }
 
         t.test("polling: opening the popover fetches on-open and aggregation reads") {
@@ -233,7 +233,7 @@ enum PollingSuite {
                 await coordinator.refresh()
             }
             t.equal(paths().filter { $0 == "/api/providers" }.count, 0)
-            t.equal(paths().filter { $0 == "/api/usage" }.count, 0)
+            t.equal(paths().filter { $0 == "/api/usage" }.count, 1)
         }
 
         // A failing quota endpoint must not drag its healthy sibling into the 5s tick.

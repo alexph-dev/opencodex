@@ -84,16 +84,21 @@ final class ProbeDelegate: NSObject, NSApplicationDelegate {
                 let quotas = (try? JSONDecoder().decode([QuotaReport].self, from: Data("[\(many)]".utf8))) ?? []
                 let usage = try? JSONDecoder().decode(
                     UsageReport.self,
-                    from: Data(#"{"range":"7d","summary":{"requests":100},"days":[{"date":"d","requests":100}]}"#.utf8))
+                    from: Data(#"{"range":"today","summary":{"requests":100,"totalTokens":1200},"models":[{"provider":"p","model":"m","requests":100,"totalTokens":1200}]}"#.utf8))
+                let timeline = try? JSONDecoder().decode(
+                    UsageTimeline.self,
+                    from: Data(#"{"start":0,"end":3600,"bucketSeconds":900,"buckets":4,"metric":"total","aggregation":"sum","grouping":"model","series":[{"id":"p/m","provider":"p","model":"m","total":1200,"points":[100,200,300,600]}],"availableModels":["p/m"],"missingMeasurements":0}"#.utf8))
                 snap = ProxySnapshot(state: .running(StartupHealth(status: "protected", protection: "service")),
-                                     endpoint: endpoint, usage: usage, quotas: quotas,
+                                     endpoint: endpoint, usage: usage, settings: CompanionSettings(menuBarMetric: .tokens),
+                                     today: usage, timeline: timeline,
+                                     quotas: quotas,
                                      quotasLoaded: true)
             case "empty":
                 let usage = try? JSONDecoder().decode(
                     UsageReport.self,
-                    from: Data(#"{"range":"7d","summary":{"requests":0},"days":[]}"#.utf8))
+                    from: Data(#"{"range":"today","summary":{"requests":0},"models":[],"accounts":[]}"#.utf8))
                 snap = ProxySnapshot(state: .running(StartupHealth(status: "protected", protection: "service")),
-                                     endpoint: endpoint, usage: usage, quotas: [], providers: [],
+                                     endpoint: endpoint, usage: usage, today: usage, quotas: [], providers: [],
                                      providersLoaded: true, quotasLoaded: true)
             default:
                 await coordinator.setPopoverOpen(true)

@@ -78,6 +78,11 @@ public struct ProxySnapshot: Equatable, Sendable {
     public var state: ProxyState
     public var endpoint: ProxyEndpoint
     public var usage: UsageReport?
+    public var settings: CompanionSettings
+    public var settingsLoaded: Bool
+    public var today: UsageReport?
+    public var timeline: UsageTimeline?
+    public var timelineUpdated: Date?
     public var quotas: [QuotaReport]
     public var providers: [ProviderSummary]
     public var defaultProvider: String?
@@ -102,6 +107,11 @@ public struct ProxySnapshot: Equatable, Sendable {
         state: ProxyState = .loading,
         endpoint: ProxyEndpoint,
         usage: UsageReport? = nil,
+        settings: CompanionSettings = .defaults,
+        settingsLoaded: Bool = false,
+        today: UsageReport? = nil,
+        timeline: UsageTimeline? = nil,
+        timelineUpdated: Date? = nil,
         quotas: [QuotaReport] = [],
         providers: [ProviderSummary] = [],
         defaultProvider: String? = nil,
@@ -116,6 +126,11 @@ public struct ProxySnapshot: Equatable, Sendable {
         self.state = state
         self.endpoint = endpoint
         self.usage = usage
+        self.settings = settings
+        self.settingsLoaded = settingsLoaded
+        self.today = today
+        self.timeline = timeline
+        self.timelineUpdated = timelineUpdated
         self.quotas = quotas
         self.providers = providers
         self.defaultProvider = defaultProvider
@@ -165,6 +180,16 @@ public struct ProxySnapshot: Equatable, Sendable {
     public var quotaRows: [NormalizedQuota] {
         quotas.map { $0.normalized() }
     }
+
+    public var visibleProviders: [ProviderSummary] {
+        providers.filter { !settings.hiddenProviders.contains($0.name) }
+    }
+
+    public var menuBarTitle: String? {
+        MenuBarTitle.render(settings: settings, today: today ?? usage, quotas: quotaRows)
+    }
+
+    public var todayRows: [UsageModelRow] { today?.models ?? [] }
 
     /// Whether the metrics section should render its empty copy. `nil` means unknown,
     /// which renders em dashes instead.

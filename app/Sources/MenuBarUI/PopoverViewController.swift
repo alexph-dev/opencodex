@@ -31,7 +31,9 @@ public final class PopoverViewController: NSViewController {
     private let scrollView = NSScrollView()
     private let body = NSStackView()
     private let metrics = MetricsView()
-    private let sparkline = SparklineView()
+    private let timelineChart = TimelineChartView()
+    private let models = ModelsListView()
+    private let accounts = AccountsListView()
     private let quotaStack = NSStackView()
     private let quotaEmpty = makeLabel("No provider quota sources connected.", font: Theme.caption, color: Theme.muted)
     private let providers = ProviderListView()
@@ -53,6 +55,7 @@ public final class PopoverViewController: NSViewController {
     private let quotaSeparator = makeSeparator()
 
     public var onDashboard: (() -> Void)?
+    public var onCompanionSettings: (() -> Void)?
     public var onStop: (() -> Void)?
     public var onQuit: (() -> Void)?
     public var onRefresh: (() -> Void)?
@@ -82,8 +85,8 @@ public final class PopoverViewController: NSViewController {
         body.alignment = .leading
         body.spacing = Theme.rowGap
         body.setViews(
-            [skeleton, metrics, sparkline, metricsSeparator, quotaStack, quotaEmpty,
-             providers, quotaSeparator, resultBanner, guidanceLabel, commandField],
+            [skeleton, metrics, timelineChart, metricsSeparator, models, quotaStack, quotaEmpty,
+             accounts, providers, quotaSeparator, resultBanner, guidanceLabel, commandField],
             in: .top
         )
         body.translatesAutoresizingMaskIntoConstraints = false
@@ -190,11 +193,15 @@ public final class PopoverViewController: NSViewController {
         quotaSeparator.isHidden = !showsData
         if showsData {
             metrics.apply(snapshot)
-            sparkline.apply(snapshot)
+            timelineChart.apply(snapshot)
+            models.apply(snapshot)
+            accounts.apply(snapshot)
             applyQuotas(snapshot)
             providers.apply(snapshot)
         } else {
-            sparkline.isHidden = true
+            timelineChart.isHidden = true
+            models.isHidden = true
+            accounts.isHidden = true
             quotaStack.isHidden = true
             quotaEmpty.isHidden = true
             providers.isHidden = true
@@ -337,10 +344,12 @@ public final class PopoverViewController: NSViewController {
         let menu = NSMenu()
         menu.addItem(withTitle: "Refresh", action: #selector(refreshTapped), keyEquivalent: "r").target = self
         menu.addItem(withTitle: "Open dashboard", action: #selector(dashboardTapped), keyEquivalent: "").target = self
+        menu.addItem(withTitle: "Companion settings…", action: #selector(companionSettingsTapped), keyEquivalent: "").target = self
         menu.addItem(.separator())
         menu.addItem(withTitle: "Quit OpenCodex", action: #selector(quitTapped), keyEquivalent: "q").target = self
         menu.popUp(positioning: nil, at: NSPoint(x: 0, y: overflowButton.bounds.height + 4), in: overflowButton)
     }
+    @objc private func companionSettingsTapped() { onCompanionSettings?() }
 
     /// AppKit routes Escape here for the whole responder chain, which `keyDown` does not
     /// reliably receive inside a popover.

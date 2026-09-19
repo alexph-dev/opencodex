@@ -129,4 +129,37 @@ runner.test("ui: providers are hidden until they have actually been read") {
     runner.equal(list.isHidden, false, "an empty result renders its own copy")
 }
 
+runner.test("ui: hidden providers do not create rows") {
+    let list = ProviderListView()
+    var current = snapshot(providers: [provider("openai"), provider("anthropic")])
+    current.settings = CompanionSettings(hiddenProviders: ["openai"])
+    list.apply(current)
+    list.expandForTesting()
+    runner.equal(list.hasProviderForTesting("openai"), false)
+    runner.equal(list.hasProviderForTesting("anthropic"), true)
+}
+
+runner.test("ui: chart setting hides the timeline view") {
+    let chart = TimelineChartView()
+    var current = snapshot(providers: [])
+    current.timeline = try! JSONDecoder().decode(
+        UsageTimeline.self,
+        from: Data(#"{"start":0,"end":1,"bucketSeconds":1,"buckets":1,"metric":"total","aggregation":"sum","grouping":"model","series":[],"availableModels":[],"missingMeasurements":0}"#.utf8)
+    )
+    current.settings = CompanionSettings(showChart: false)
+    chart.apply(current)
+    runner.equal(chart.isHidden, true)
+}
+
+runner.test("ui: menu title renders from a companion template") {
+    let report = try! JSONDecoder().decode(
+        UsageReport.self,
+        from: Data(#"{"range":"today","summary":{"requests":3}}"#.utf8)
+    )
+    var current = snapshot(providers: [])
+    current.today = report
+    current.settings = CompanionSettings(menuBarTemplate: "req {requests}")
+    runner.equal(current.menuBarTitle, "req 3")
+}
+
 exit(runner.summarize())

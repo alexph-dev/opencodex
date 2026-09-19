@@ -78,6 +78,22 @@ final class StubProtocol: URLProtocol, @unchecked Sendable {
             Self.gateEntered.signal()
             gate.wait()
         }
+        if request.url?.path == "/api/companion/settings" {
+            let body = #"{"settings":{"menuBarMetric":"requests","showToday":true,"showChart":true,"showModels":true,"showCost":true,"showAccounts":true,"chartHours":24,"bucketMinutes":60,"chartStyle":"line","tokenMetric":"total","aggregation":"sum","chartGrouping":"model","hiddenProviders":[]}}"#
+            let http = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: "HTTP/1.1", headerFields: nil)!
+            client?.urlProtocol(self, didReceive: http, cacheStoragePolicy: .notAllowed)
+            client?.urlProtocol(self, didLoad: Data(body.utf8))
+            client?.urlProtocolDidFinishLoading(self)
+            return
+        }
+        if request.url?.path == "/api/usage/timeline" {
+            let body = #"{"start":0,"end":3600,"bucketSeconds":3600,"buckets":1,"metric":"total","aggregation":"sum","grouping":"model","series":[],"availableModels":[],"missingMeasurements":0}"#
+            let http = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: "HTTP/1.1", headerFields: nil)!
+            client?.urlProtocol(self, didReceive: http, cacheStoragePolicy: .notAllowed)
+            client?.urlProtocol(self, didLoad: Data(body.utf8))
+            client?.urlProtocolDidFinishLoading(self)
+            return
+        }
         guard let response = Self.next() else {
             client?.urlProtocol(self, didFailWithError: URLError(.cannotConnectToHost))
             return

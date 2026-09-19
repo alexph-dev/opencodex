@@ -16,6 +16,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
     private var coordinator: PollingCoordinator?
     private var actions: ActionCoordinator?
     private var client: ProxyClient?
+    private let widgetStore = WidgetSnapshotStore()
     /// The snapshot the UI is currently showing, for decisions that need context
     /// (the start command to display, the default provider to protect).
     private var latest: ProxySnapshot?
@@ -44,6 +45,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem = item
 
         controller.onDashboard = { [weak self] in self?.openDashboard() }
+        controller.onCompanionSettings = { [weak self] in self?.openCompanionSettings() }
         controller.onStop = { [weak self] in self?.stopProxy() }
         controller.onRefresh = { [weak self] in self?.refreshNow() }
         controller.onAddKey = { [weak self] in self?.openDashboard() }
@@ -97,9 +99,15 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
     @MainActor
     fileprivate func render(_ snapshot: ProxySnapshot) {
         latest = snapshot
+        let title = snapshot.menuBarTitle ?? ""
+        statusItem?.button?.title = title
+        statusItem?.button?.font = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .medium)
+        statusItem?.button?.imagePosition = title.isEmpty ? .imageOnly : .imageLeading
         statusItem?.button?.image = StatusIcon.image(for: snapshot.state)
         statusItem?.button?.toolTip = "OpenCodex — \(snapshot.state.title) (\(snapshot.endpoint.display))"
         controller.apply(snapshot)
+        let widgetSnapshot = WidgetSnapshot.make(from: snapshot)
+        Task.detached { [widgetStore] in widgetStore.writeIfChanged(widgetSnapshot) }
     }
 
     // MARK: - Actions
@@ -153,6 +161,11 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func openDashboard() {
         NSWorkspace.shared.open(endpoint.baseURL)
+    }
+
+    private func openCompanionSettings() {
+        guard let url = URL(string: "\(endpoint.baseURL.absoluteString)/#/usage#usage-section-companion") else { return }
+        NSWorkspace.shared.open(url)
     }
 
     /// Stopping is destructive: it interrupts in-flight requests and stops the launchd

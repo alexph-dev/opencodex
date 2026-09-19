@@ -151,8 +151,10 @@ final class MetricsView: NSView {
     required init?(coder: NSCoder) { nil }
 
     func apply(_ snapshot: ProxySnapshot) {
-        let usage = snapshot.usage
+        let usage = snapshot.today ?? snapshot.usage
+        isHidden = !snapshot.settings.showToday
         rangeLabel.stringValue = usage?.rangeLabel ?? "USAGE"
+        columnsRow.arrangedSubviews[2].isHidden = !snapshot.settings.showCost
 
         // Three states: known-empty gets copy, unknown gets em dashes, data gets values.
         switch snapshot.usageIsEmpty {
@@ -173,53 +175,6 @@ final class MetricsView: NSView {
                     ? "\(requests) requests, partly estimated"
                     : "\(requests) requests"
             )
-        }
-    }
-}
-
-/// Day-granular usage trend. Not "activity" — per-request logs are a different surface.
-final class SparklineView: NSView {
-    private var values: [Int] = []
-    private let caption = makeLabel("", font: Theme.micro, color: Theme.faint)
-
-    override var intrinsicContentSize: NSSize { NSSize(width: NSView.noIntrinsicMetric, height: 22) }
-
-    func apply(_ snapshot: ProxySnapshot) {
-        values = (snapshot.usage?.days ?? []).map { $0.requests ?? 0 }
-        isHidden = values.isEmpty || values.allSatisfy { $0 == 0 }
-        setAccessibilityLabel("Usage trend over \(values.count) days")
-        needsDisplay = true
-    }
-
-    override func draw(_ dirtyRect: NSRect) {
-        guard !values.isEmpty, let peak = values.max(), peak > 0 else { return }
-        // Narrow bars with generous gaps read as a chart; wide slabs read as a progress
-        // bar. Cap the width so a short series does not stretch into blocks.
-        let count = CGFloat(values.count)
-        let gap: CGFloat = 4
-        let available = bounds.width - gap * (count - 1)
-        let barWidth = min(14, max(2, available / count))
-        // Left-aligned so the trend sits under the metric columns it belongs to.
-        // Centering it would float the chart away from its own labels.
-        let originX: CGFloat = 0
-
-        for (index, value) in values.enumerated() {
-            // A floor of 2pt keeps a low-but-nonzero day visible; a true zero draws
-            // nothing, so "quiet" and "none" stay distinguishable.
-            let ratio = CGFloat(value) / CGFloat(peak)
-            guard value > 0 else { continue }
-            let height = max(2, bounds.height * ratio)
-            let rect = NSRect(
-                x: originX + CGFloat(index) * (barWidth + gap),
-                y: 0,
-                width: barWidth,
-                height: height
-            )
-            // The most recent day is the one being asked about, so it carries full
-            // weight while history recedes.
-            let isLatest = index == values.count - 1
-            (isLatest ? Theme.muted : Theme.graphMark).setFill()
-            NSBezierPath(roundedRect: rect, xRadius: 1.5, yRadius: 1.5).fill()
         }
     }
 }

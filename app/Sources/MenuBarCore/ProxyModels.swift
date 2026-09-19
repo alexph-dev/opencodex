@@ -80,6 +80,7 @@ public struct ProxyConfigSummary: Decodable, Equatable, Sendable {
 /// stringly-typed range would let a caller ask for `24h`, receive thirty days of data,
 /// and label it wrongly.
 public enum UsageRange: String, Sendable, CaseIterable {
+    case today = "today"
     case sevenDays = "7d"
     case thirtyDays = "30d"
     case all
@@ -110,6 +111,8 @@ public struct UsageReport: Decodable, Equatable, Sendable {
     public let generatedAt: Double?
     public let summary: UsageSummary?
     public let days: [UsageDay]?
+    public let models: [UsageModelRow]?
+    public let accounts: [UsageAccountRow]?
 
     /// The range the server actually applied, which is not always the one requested.
     public var effectiveRange: UsageRange? {
@@ -119,6 +122,7 @@ public struct UsageReport: Decodable, Equatable, Sendable {
     /// Header text driven by the response, never by the request.
     public var rangeLabel: String {
         switch effectiveRange {
+        case .today: return "TODAY"
         case .sevenDays: return "LAST 7 DAYS"
         case .thirtyDays: return "LAST 30 DAYS"
         case .all: return "ALL TIME"
@@ -137,6 +141,21 @@ public struct UsageReport: Decodable, Equatable, Sendable {
         guard let requests = summary?.requests else { return nil }
         return requests == 0
     }
+}
+
+public struct UsageModelRow: Decodable, Equatable, Sendable {
+    public let provider: String?
+    public let model: String?
+    public let requests: Int?
+    public let totalTokens: Int?
+    public let estimatedCostUsd: Double?
+}
+
+public struct UsageAccountRow: Decodable, Equatable, Sendable {
+    public let accountLogLabel: String?
+    public let requests: Int?
+    public let totalTokens: Int?
+    public let estimatedCostUsd: Double?
 }
 
 public struct QuotaWindow: Decodable, Equatable, Sendable {

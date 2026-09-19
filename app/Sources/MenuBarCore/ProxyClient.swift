@@ -91,6 +91,24 @@ public actor ProxyClient {
         try await get("api/usage", query: [URLQueryItem(name: "range", value: range.rawValue)])
     }
 
+    public func companionSettings() async throws -> CompanionSettingsResponse {
+        try await get("api/companion/settings")
+    }
+
+    public func timeline(_ settings: CompanionSettings) async throws -> UsageTimeline {
+        var query = [
+            URLQueryItem(name: "hours", value: String(settings.chartHours)),
+            URLQueryItem(name: "bucketMinutes", value: String(settings.bucketMinutes)),
+            URLQueryItem(name: "metric", value: settings.tokenMetric.rawValue),
+            URLQueryItem(name: "aggregation", value: settings.aggregation.rawValue),
+            URLQueryItem(name: "grouping", value: settings.chartGrouping.rawValue),
+        ]
+        if let models = settings.models, !models.isEmpty {
+            query.append(URLQueryItem(name: "models", value: models.joined(separator: ",")))
+        }
+        return try await get("api/usage/timeline", query: query)
+    }
+
     public func quotas() async throws -> [QuotaReport] {
         let envelope: QuotaEnvelope = try await get("api/provider-quotas")
         return envelope.reports ?? []

@@ -116,20 +116,18 @@ public actor PollingCoordinator {
             return
         }
 
-        if popoverOpen {
-            // Only on an actual open or manual refresh. Running these on every liveness
-            // tick turned two rarely-changing endpoints into 5-second pollers.
-            if includeHeavy { await refreshOnOpen(cycle: cycle) }
+        if popoverOpen, includeHeavy {
+            await refreshOnOpen(cycle: cycle)
+        }
 
-            // Rate-limit on ATTEMPT, not success: gating on success alone meant one
-            // persistently failing endpoint re-fetched its healthy sibling every 5s.
-            let aggregationDue = lastAggregationAttempt.map {
-                Date().timeIntervalSince($0) >= Self.heavyInterval
-            } ?? true
-            if aggregationDue, isCurrent(cycle) {
-                lastAggregationAttempt = Date()
-                _ = await refreshAggregation(cycle: cycle)
-            }
+        // Settings and today metrics also drive the menu-bar title, so aggregation runs
+        // on the normal cadence even while the popover is closed.
+        let aggregationDue = lastAggregationAttempt.map {
+            Date().timeIntervalSince($0) >= Self.heavyInterval
+        } ?? true
+        if aggregationDue, isCurrentCycle(cycle) {
+            lastAggregationAttempt = Date()
+            _ = await refreshAggregation(cycle: cycle)
         }
 
         if cycle == generation { publish() }
@@ -202,28 +200,48 @@ public actor PollingCoordinator {
 
     /// Still the newest cycle, and still worth doing.
     private func isCurrent(_ cycle: Int) -> Bool { cycle == generation && popoverOpen }
+    private func isCurrentCycle(_ cycle: Int) -> Bool { cycle == generation }
 
     /// The expensive aggregation reads. Returns whether every read landed, so a partial
     /// failure does not masquerade as a completed refresh.
     private func refreshAggregation(cycle: Int) async -> Bool {
-        guard isCurrent(cycle) else { return false }
+        guard isCurrentCycle(cycle) else { return false }
         var complete = true
 
         // Each read is independent: one failing endpoint must not blank the others.
-        if let usage = try? await client.usage(range: .sevenDays) {
-            guard isCurrent(cycle) else { return false }
-            snapshot.usage = usage
+        if let response = try? await client.companionSettings() {
+            guard isCurrentCycle(cycle) else { return false }
+            snapshot.settings = response.settings
+            snapshot.settingsLoaded = true
+        } else {
+            complete = false
+        }
+
+        guard isCurrentCycle(cycle) else { return false }
+        if let today = try? await client.usage(range: .today) {
+            guard isCurrentCycle(cycle) else { return false }
+            snapshot.today = today
+            snapshot.usage = today
             snapshot.usageUpdated = Date()
         } else {
             complete = false
         }
 
-        guard isCurrent(cycle) else { return false }
-        if let quotas = try? await client.quotas() {
+        guard isCurrentCycle(cycle) else { return false }
+        if snapshot.settings.showChart, let timeline = try? await client.timeline(snapshot.settings) {
+            guard isCurrentCycle(cycle) else { return false }
+            snapshot.timeline = timeline
+            snapshot.timelineUpdated = Date()
+        } else if snapshot.settings.showChart {
+            complete = false
+        }
+
+        guard isCurrentCycle(cycle) else { return false }
+        if (popoverOpen || snapshot.settings.menuBarMetric == .quota), let quotas = try? await client.quotas() {
             guard isCurrent(cycle) else { return false }
             snapshot.quotas = quotas
             snapshot.quotasLoaded = true
-        } else {
+        } else if popoverOpen || snapshot.settings.menuBarMetric == .quota {
             complete = false
         }
 
