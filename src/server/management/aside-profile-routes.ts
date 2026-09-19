@@ -10,6 +10,7 @@ import {
   listAsideOperations, findAsideOperation, restoreAsideProfile, deleteAsideOperation,
   asideOperationMatchesCurrent,
 } from "../../integrations/aside-profile-journal";
+import type { AsideOperation } from "../../integrations/aside-profile-journal";
 import type { WriteRefused } from "../../integrations/writer";
 import type { IntegrationMutationPlan, IntegrationPlanOperation } from "../../integrations/mutation-plan";
 import { previewExportModels, previewExportSnapshot } from "./model-rows";
@@ -56,7 +57,7 @@ function asideGuardFor(
   boundInput: AsideProfilesInput,
   profileIdValue: number,
   binding: { operation: IntegrationPlanOperation; fingerprint: string },
-  request: { opId?: string; confirmDrift?: boolean },
+  request: { opId?: string; confirmDrift?: boolean; resolved?: AsideOperation },
   capture: { plan: IntegrationMutationPlan | null },
 ): () => Promise<AsideProfileWriteOutcome | null> {
   return async () => {
@@ -65,6 +66,11 @@ function asideGuardFor(
       operation: binding.operation,
       ...(request.opId === undefined ? {} : { opId: request.opId }),
       ...(request.confirmDrift === undefined ? {} : { confirmDrift: request.confirmDrift }),
+      // The row the route selected, so the guard and the mutation mean the same operation even
+      // when more than one valid copy exists.
+      ...(request.resolved === undefined
+        ? {}
+        : { resolved: { entry: request.resolved.entry, store: request.resolved.store } }),
     });
     if (plan.canApply && plan.fingerprint === binding.fingerprint) return null;
     capture.plan = plan;
@@ -185,6 +191,16 @@ export async function handleAsideProfileRoutes(
       if (operation === "restore" && (typeof body.opId !== "string" || !body.opId.trim())) {
         throw new ProfileQueryError("opId must be a non-empty string");
       }
+      // The preview resolves the row the same way the mutation will, once, here.
+      const selected = operation === "restore"
+        ? findAsideOperation(options.input(), String(body.opId).trim(), id)
+        : null;
+      if (operation === "restore" && selected === null) {
+        return jsonResponse({
+          error: "integration operation not found",
+          code: "integration_operation_not_found",
+        }, 404, req, ctx.config);
+      }
       const roster = previewExportSnapshot(ctx.config);
       if (roster === null) {
         return jsonResponse({
@@ -196,7 +212,11 @@ export async function handleAsideProfileRoutes(
         profileId: id,
         operation,
         ...(operation === "restore"
-          ? { opId: String(body.opId).trim(), confirmDrift: body.confirmDrift === true }
+          ? {
+            opId: String(body.opId).trim(),
+            confirmDrift: body.confirmDrift === true,
+            ...(selected === null ? {} : { resolved: { entry: selected.entry, store: selected.store } }),
+          }
           : {}),
       });
       return jsonResponse(plan, 200, req, ctx.config);
@@ -347,6 +367,7 @@ export async function asideRestoreResponse(
       revalidate = asideGuardFor(restoreInput, operation.profileId, restoreBinding, {
         opId: body.opId,
         confirmDrift: body.confirmDrift === true,
+        resolved: operation,
       }, capture);
     }
     const result = await restoreAsideProfile(

@@ -2,6 +2,8 @@ import type { AsideProfile } from "../clients/aside-profiles";
 import { asideHomeDir } from "../clients/config-export";
 import { join } from "node:path";
 import type { OwnedIntegrationRefreshOutcome } from "./owned-refresh";
+import type { JournalEntry } from "./journal";
+import type { IntegrationStateStore } from "./store";
 import { readIntegrationState, type IntegrationState, type IntegrationStatus } from "./state";
 import {
   applyIntegrationCoordinated, disableIntegrationCoordinated,
@@ -35,7 +37,14 @@ export type { AsideProfilesInput, AsideProfileWriteOutcome } from "./aside-profi
  */
 export async function previewAsideProfile(
   input: AsideProfilesInput,
-  request: { profileId: number; operation: IntegrationPlanOperation; opId?: string; confirmDrift?: boolean },
+  request: {
+    profileId: number;
+    operation: IntegrationPlanOperation;
+    opId?: string;
+    confirmDrift?: boolean;
+    /** The row and store the route already selected; re-resolving could pick a different copy. */
+    resolved?: { entry: JournalEntry; store: IntegrationStateStore };
+  },
 ): Promise<IntegrationMutationPlan> {
   const ctx = createAsideProfileContext(input);
   const profile = selectAsideProfiles(ctx, request.profileId)[0];
@@ -47,6 +56,7 @@ export async function previewAsideProfile(
     profileId: request.profileId,
     ...(request.opId === undefined ? {} : { opId: request.opId }),
     ...(request.confirmDrift === undefined ? {} : { confirmDrift: request.confirmDrift }),
+    ...(request.resolved === undefined ? {} : { resolved: request.resolved }),
   });
 }
 

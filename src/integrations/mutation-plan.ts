@@ -453,8 +453,21 @@ function unboundPlan(
  * that was readable but unparseable, which is the state that most needs restoring, and accepted a
  * row recorded against a previous home, which is the single case path equality exists to refuse.
  */
-export function observeRestore(input: IntegrationWriteInput, opId: string, effects: ObservationEffects) {
-  const store = input.store ?? createIntegrationStateStore();
+export function observeRestore(
+  input: IntegrationWriteInput,
+  opId: string,
+  effects: ObservationEffects,
+  /**
+   * The row a caller already selected, with the store it came from.
+   *
+   * Aside can hold more than one valid copy of the same operation, so re-resolving here could
+   * legitimately pick a different row than the mutation will. The plan would then describe an
+   * operation the confirmation was never about. A caller that has resolved one passes it in, and
+   * neither side resolves again.
+   */
+  resolved?: { entry: JournalEntry; store: IntegrationStateStore },
+) {
+  const store = resolved?.store ?? input.store ?? createIntegrationStateStore();
   let io = input.io ?? defaultIntegrationIO(store);
   const clientId = input.clientId;
   let resolved: { configPath: string; detectDir: string };
@@ -471,7 +484,7 @@ export function observeRestore(input: IntegrationWriteInput, opId: string, effec
       failed: observationFailure("unsafe", "unsafe", "the client home is missing; restore will not create it"),
     } as const;
   }
-  const entry = store.findOperation(opId);
+  const entry = resolved?.entry ?? store.findOperation(opId);
   if (!entry || entry.clientId !== clientId) {
     return { failed: observationFailure("unsafe", "unsafe", "that operation cannot be undone") } as const;
   }
@@ -525,6 +538,8 @@ export interface PreviewRequest {
   readonly opId?: string;
   readonly confirmDrift?: boolean;
   readonly profileId?: number;
+  /** A row and store the caller already selected, so neither side resolves it twice. */
+  readonly resolved?: { entry: JournalEntry; store: IntegrationStateStore };
 }
 
 /**
@@ -574,7 +589,12 @@ function previewRestore(input: IntegrationWriteInput, request: PreviewRequest): 
     unboundPlan(input.clientId, "restore", { reason: "unsafe", state: "unsafe", message }, request.profileId);
   if (request.opId === undefined) return refusal("that operation cannot be undone");
 
-  const observed = observeRestore(input, request.opId, { maintenance: false, recover: false });
+  const observed = observeRestore(
+    input,
+    request.opId,
+    { maintenance: false, recover: false },
+    request.resolved,
+  );
   if (observed.failed) return unboundPlan(input.clientId, "restore", observed.failed, request.profileId);
 
   /*
