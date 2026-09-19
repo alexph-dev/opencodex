@@ -77,14 +77,24 @@ export function effectiveManagementDisplayName(
  */
 export async function listManagementModelRows(
   config: OcxConfig,
-  options: { entitlementWaitMs?: number } = {},
+  options: { entitlementWaitMs?: number; models?: readonly CatalogModel[] } = {},
 ): Promise<ManagementModelRow[]> {
-  const [models] = await Promise.all([
-    fetchAllModels(config),
-    ensureCodexEntitlementFreshness(config, {
-      waitMs: options.entitlementWaitMs ?? 3_000,
-    }),
-  ]);
+  /*
+   * A supplied roster skips the gather, and that is the point rather than an optimization.
+   * `fetchAllModels` reaches providers and can persist an initial model selection, which a
+   * read-only caller must not do. Everything below this line is the projection — the disabled
+   * computation, native and account-bound rows, custom rows and the public list — so a caller
+   * that brings its own roster still sees exactly what a writer would, and the two cannot
+   * disagree about the roster for any reason except the roster itself.
+   */
+  const models = options.models === undefined
+    ? (await Promise.all([
+      fetchAllModels(config),
+      ensureCodexEntitlementFreshness(config, {
+        waitMs: options.entitlementWaitMs ?? 3_000,
+      }),
+    ]))[0]
+    : [...options.models];
   const disabled = new Set(config.disabledModels ?? []);
   // Native GPT passthrough rows lead (provider "openai", bare-slug namespaced ids): sourced
   // from the static supported set so a disabled model stays listed and re-enableable.
@@ -236,8 +246,11 @@ export function toExportModel(row: ManagementModelRow): ExportModel {
  * tab is absent from `/v1/models` and exporting it would hand the client a
  * selector the proxy refuses to route.
  */
-export async function loadExportModels(config: OcxConfig): Promise<ExportModel[]> {
-  const rows = await listManagementModelRows(config);
+export async function loadExportModels(
+  config: OcxConfig,
+  models?: readonly CatalogModel[],
+): Promise<ExportModel[]> {
+  const rows = await listManagementModelRows(config, models === undefined ? {} : { models });
   // Management deliberately lists the full roster so hidden models can be enabled.
   // A client picker must also honor the provider selection, not just its blocklist.
   const visibleRouted = new Set(filterCatalogVisibleModels(rows.filter(row => !row.native), config));
