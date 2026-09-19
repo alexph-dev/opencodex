@@ -277,6 +277,42 @@ test("a stale profile confirmation is refused before the preference is written",
   expect(saved).toBeUndefined();
 });
 
+test("a duplicate copy of an operation cannot redirect a bound undo", async () => {
+  await seedRoster();
+  const applied = await api("/api/client-integrations/aside/profiles/1", "PUT", { enabled: true });
+  expect(applied.status).toBe(200);
+  expect(document(1).providers.opencodex).toBeDefined();
+
+  /*
+   * Aside can legitimately hold the same operation in more than one profile store. Copying the
+   * row into a sibling gives the request two valid rows to resolve, which is the situation where
+   * a preview and the mutation could each pick a different one and the confirmation would then
+   * describe an operation that is not the one running.
+   */
+  const rowsPath = join(root, "store", "aside-profiles", "1", "journal.jsonl");
+  const siblingDir = join(root, "store", "aside-profiles", "2");
+  mkdirSync(siblingDir, { recursive: true });
+  writeFileSync(join(siblingDir, "journal.jsonl"), readFileSync(rowsPath, "utf8"));
+
+  const opId = JSON.parse(readFileSync(rowsPath, "utf8").trim().split("\n")[0] ?? "{}").opId as string;
+  expect(typeof opId).toBe("string");
+
+  const preview = await api("/api/client-integrations/aside/profiles/1/preview", "POST", { operation: "restore", opId });
+  expect(preview.status).toBe(200);
+  const plan = await preview.json() as { canApply: boolean; fingerprint: string; profileId?: number };
+  expect(plan.profileId).toBe(1);
+
+  const siblingBefore = readFileSync(path(2), "utf8");
+  const undo = await api("/api/client-integrations/aside/profiles/1/restore", "POST", {
+    opId, operation: "restore", planFingerprint: plan.fingerprint,
+  });
+  expect(undo.status).toBe(200);
+
+  // The undo acted on the profile that was asked for, and the duplicate did not redirect it.
+  expect(document(1).providers.opencodex).toBeUndefined();
+  expect(readFileSync(path(2), "utf8")).toBe(siblingBefore);
+});
+
 test.each(["../0", "01", "-1", "9007199254740992"])("rejects invalid profile %s before file mutation", async id => {
   const before = [0,1,2].map(i => readFileSync(path(i), "utf8"));
   const response = await api(`/api/client-integrations/aside?profile=${encodeURIComponent(id)}`, "PUT", { enabled: true });
