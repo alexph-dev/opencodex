@@ -1,4 +1,9 @@
 import { describe, expect, test } from "bun:test";
+import { afterEach, beforeEach } from "bun:test";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { removeTreeWithRetry } from "../helpers/remove-tree";
 import {
   listManagementModelRows,
   loadExportModels,
@@ -23,6 +28,26 @@ const CONFIG: OcxConfig = {
 } as OcxConfig;
 
 const SUPPLIED: CatalogModel[] = [{ id: "supplied-model", provider: "supplied" }];
+
+/**
+ * A roster is identified by the configuration it was admitted under, so these cases need their own
+ * configuration directory rather than whatever the machine running them happens to have.
+ */
+let configRoot = "";
+let priorHome: string | undefined;
+
+beforeEach(() => {
+  configRoot = mkdtempSync(join(tmpdir(), "ocx-roster-config-"));
+  priorHome = process.env.OPENCODEX_HOME;
+  process.env.OPENCODEX_HOME = configRoot;
+  mkdirSync(configRoot, { recursive: true });
+});
+
+afterEach(() => {
+  if (priorHome === undefined) delete process.env.OPENCODEX_HOME;
+  else process.env.OPENCODEX_HOME = priorHome;
+  removeTreeWithRetry(configRoot);
+});
 
 describe("a supplied roster replaces the gather and keeps the projection", () => {
   test("rows come from the roster the caller brought", async () => {
@@ -114,6 +139,19 @@ describe("a preview reads only a roster an authoritative load already finished",
     await loadExportModels(CONFIG, SUPPLIED);
     const reborn = previewExportModels(CONFIG);
     expect(reborn).not.toBeNull();
+  });
+
+  test("an absent config file is a configuration; an unreadable one is not", async () => {
+    // Absent means defaults, which is a fresh install and CI. Refusing there would make the
+    // feature look dead rather than safe.
+    resetExportSnapshotForTests();
+    await loadExportModels(CONFIG, SUPPLIED);
+    expect(previewExportModels(CONFIG)).not.toBeNull();
+
+    // A file that exists and cannot be parsed says nothing about which configuration this roster
+    // belongs to, so it fails closed.
+    writeFileSync(join(configRoot, "config.json"), "{ not valid json");
+    expect(previewExportModels(CONFIG)).toBeNull();
   });
 
   test("the snapshot does not share objects with the caller that produced it", async () => {
