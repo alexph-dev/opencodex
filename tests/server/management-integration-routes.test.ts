@@ -1322,6 +1322,9 @@ describe("integration previews are reads", () => {
   test("a bound change cannot commit without a plan that still validates", async () => {
     const configPath = installHermes();
     const before = existsSync(configPath) ? readFileSync(configPath, "utf8") : null;
+    const storeListing = (): string =>
+      existsSync(storeRoot) ? readdirSync(storeRoot, { recursive: true }).sort().join("|") : "";
+    const storeBefore = storeListing();
 
     const response = await api("/api/client-integrations/hermes", {
       method: "PUT",
@@ -1337,5 +1340,8 @@ describe("integration previews are reads", () => {
 
     const after = existsSync(configPath) ? readFileSync(configPath, "utf8") : null;
     expect(after).toBe(before);
+    // Target bytes alone would miss a snapshot, an ownership record or a journal row written on
+    // the way to a refusal, and those are writes too.
+    expect(storeListing()).toBe(storeBefore);
   });
 });
