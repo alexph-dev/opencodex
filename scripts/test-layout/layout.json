@@ -167,6 +167,7 @@
     }
   },
   "explicit": {
+    "openai-chat-inline-think-overlay.test.ts": "adapters/openai",
     "release-desktop-scripts.test.ts": "ci-workflows",
     "installed-gate-drivers.test.ts": "ci-workflows",
     "gui-desktop-sidecar-script.test.ts": "gui",
