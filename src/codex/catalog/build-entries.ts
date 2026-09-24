@@ -1,4 +1,5 @@
 import { CODEX_REASONING_LEVELS, type CodexReasoningLevel } from "../../reasoning-effort";
+import { NATIVE_MODEL_ALIAS_KIND, nativeModelAliasSource, nativeModelAliasEntry, alignNativeModelAliases } from "./native-model-aliases";
 import { clearModelCache } from "../model-cache";
 import { routedSlug, slugEquivalenceKey } from "../../providers/slug-codec";
 import { COMBO_NAMESPACE } from "../../combos";
@@ -169,6 +170,7 @@ export function buildCatalogEntriesFromObservedState({
     return PICKER_ORDER_PRIORITY_BASE + hit * priorityStride;
   };
   const out: RawEntry[] = [];
+  const additiveNativeAliases: CatalogModel[] = [];
   const nativeEntries: RawEntry[] = [];
   const collisionSkipped = resolveSlugAliasCollisions([...goModels]);
   const emittedNativeAliases = new Set<CatalogModel>();
@@ -255,6 +257,7 @@ export function buildCatalogEntriesFromObservedState({
   for (const m of goModels) {
     if (collisionSkipped.has(m) || emittedNativeAliases.has(m)) continue;
     const slug = catalogModelSlug(m);
+    if (m.catalogKind === NATIVE_MODEL_ALIAS_KIND) { additiveNativeAliases.push(m); continue; }
     if (m.provider !== COMBO_NAMESPACE && comboPublicSlugs.has(slug)) {
       warnComboMasqueradeCollisionOnce(slug);
       continue;
@@ -294,22 +297,30 @@ export function buildCatalogEntriesFromObservedState({
     }
     out.push(e);
   }
-  // Central capability override (phase 120.4): the advertised flag must match the implemented WS
-  // endpoint. Overrides both the routed strip (normalizeRoutedCatalogEntry) and any native template
-  // leak (deriveEntry clones the template as-is for native slugs).
-  for (const entry of out) {
-    if (wsEnabled) entry.supports_websockets = true;
-    else {
-      delete entry.supports_websockets;
-      // Snapshot-backed native entries carry prefer_websockets: never advertise a preference
-      // for an endpoint ocx has disabled.
-      delete entry.prefer_websockets;
+  const finish = (entries: RawEntry[]): RawEntry[] => {
+    // Ordinary entries and additive native sources share the same transport/multi-agent policy.
+    for (const entry of entries) {
+      if (wsEnabled) entry.supports_websockets = true;
+      else {
+        delete entry.supports_websockets;
+        delete entry.prefer_websockets;
+      }
     }
+    return applyMultiAgentMode(entries, multiAgentMode, multiAgentV2Enabled, {
+      keepNativeChatGptOnV1, preserveDefaultMultiAgentVersion: isReserveCatalogProjection,
+    });
+  };
+  const finished = finish(out);
+  for (const model of additiveNativeAliases) {
+    const source = finish([deriveEntry(template, model.id, "", 9, undefined, new Set(), openaiContextCap)])[0]!;
+    const slug = catalogModelSlug(model);
+    finished.push(nativeModelAliasEntry(source, {
+      slug, display_name: model.displayName, visibility: "list",
+      priority: rank.has(slug) ? rank.get(slug)! * priorityStride
+        : Math.max(0, ...finished.map(row => typeof row.priority === "number" ? row.priority : 0)) + 1,
+    }));
   }
-  return applyMultiAgentMode(out, multiAgentMode, multiAgentV2Enabled, {
-    keepNativeChatGptOnV1,
-    preserveDefaultMultiAgentVersion: isReserveCatalogProjection,
-  });
+  return finished;
 }
 
 export function resetCatalogRuntimeStateForTests(): void {
@@ -547,6 +558,7 @@ export function mergeCatalogEntriesFromObservedState({
   // Their builder already finalized exact native ladders and ordinary routed mock tiers.
   const freshCustomEntries = new Set(detachedRoutedEntries.filter(entry =>
     entry.opencodex_catalog_kind === CODEX_CUSTOM_MODEL_CATALOG_KIND));
+  const freshNativeAliases = new Set(detachedRoutedEntries.filter(entry => nativeModelAliasSource(entry) !== undefined));
   const detachedAccountBoundEntries = accountBoundEntries
     .map(entry => structuredClone(entry) as RawEntry);
   const disabledModelKeys = new Set([...disabledModels].map(slugEquivalenceKey));
@@ -597,6 +609,9 @@ export function mergeCatalogEntriesFromObservedState({
     return restorableCatalogKeys.has(key) ? [] : [key];
   }));
   const admittedRoutedEntries = validRoutedEntries.filter(entry => {
+    // An additive native selector never takes over a row the normal merge would retain.
+    if (freshNativeAliases.has(entry) && detachedCatalogModels.some(existing =>
+      existing.slug === entry.slug && wouldSurviveUnreplaced(existing))) return false;
     if (!isExactComboCatalogEntry(entry, exactComboSlugs)) return true;
     const slug = entry.slug as string;
     const key = slugEquivalenceKey(slug);
@@ -749,7 +764,8 @@ export function mergeCatalogEntriesFromObservedState({
     if (isNativeAliasCatalogEntry(entry)) return exactComboSlugs.has(slug);
     // Current custom rows are always regenerated from config, even while provider discovery is
     // degraded. A marked row absent from the fresh projection is therefore an intentional delete.
-    if (entry.opencodex_catalog_kind === CODEX_CUSTOM_MODEL_CATALOG_KIND) return false;
+    if (entry.opencodex_catalog_kind === CODEX_CUSTOM_MODEL_CATALOG_KIND
+      || entry.opencodex_catalog_kind === NATIVE_MODEL_ALIAS_KIND) return false;
     // Before custom rows had a marker, a config deletion could otherwise be mistaken for a
     // provider outage. Only explicit save-boundary evidence may classify an unmarked OpenCodex
     // row; foreign and future-marked rows fail closed and remain preserved.
@@ -806,7 +822,9 @@ export function mergeCatalogEntriesFromObservedState({
     const provider = slug.slice(0, slash);
     if (pendingProviderNames.has(provider)) return false;
     const selected = selectedModelKeysByProvider.get(provider);
-    return selected === undefined || selected.has(slugEquivalenceKey(slug));
+    return selected === undefined || selected.has(slugEquivalenceKey(
+      freshNativeAliases.has(entry) ? `openai/${nativeModelAliasSource(entry)}` : slug,
+    ));
   });
   if (!hasPhysicalComboProvider) {
     finalRoutedEntries = finalRoutedEntries.filter(entry => {
@@ -901,12 +919,12 @@ export function mergeCatalogEntriesFromObservedState({
   // Native enable/disable runs as the LAST pass so the upstream-upgrade branch above can never
   // clobber a hide flag back to list. Bare ids disable every account clone; qualified ids disable
   // only their generated account row.
-  const versionedEntries = applyMultiAgentMode(
+  const versionedEntries = alignNativeModelAliases(applyMultiAgentMode(
     applyNativeVisibility(mergedEntries, disabledModels, alignedAccountBoundEntries.length > 0, observedNativeSlugs),
     multiAgentMode,
     multiAgentV2Enabled,
     { keepNativeChatGptOnV1, preserveDefaultMultiAgentVersion: isReserveCatalogProjection, nativeDefaults: nativeMultiAgentDefaults },
-  );
+  ), freshNativeAliases, featured, disabledModels);
   applyFullModelPickerOrder(versionedEntries, modelPickerOrder);
   for (const entry of versionedEntries) {
     // Templates and account clones must not inherit the native row's overlay marker.

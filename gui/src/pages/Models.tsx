@@ -1734,7 +1734,7 @@ export default function Models({ apiBase, restartEpoch = 0, connected = false, c
                         {t("models.inactiveNoCredit")}
                       </span>
                     )}
-                     {aliases.models[provider]?.[m.id] && <strong className="mono text-control">{aliases.models[provider][m.id].alias}</strong>}
+                     {!m.native && aliases.models[provider]?.[m.id] && <strong className="mono text-control">{aliases.models[provider][m.id].alias}</strong>}
                      <span className="models-model-identity">
                        <code className="mono text-control" style={{ color: off ? "var(--faint)" : "var(--text)", textDecoration: off ? "line-through" : "none" }}>{m.native ? modelLabel(m.id) : m.namespaced}</code>
                        {!m.native && m.displayName?.trim() && m.displayName.trim() !== m.namespaced && (

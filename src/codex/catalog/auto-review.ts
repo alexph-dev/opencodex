@@ -5,6 +5,7 @@ import { canonicalAutoReviewModelKey, isValidAutoReviewModel as isValidAutoRevie
 import { readConfiguredAutoReviewModel } from "./parsing";
 import type { RawEntry } from "./parsing";
 import { configuredCatalogEntry } from "./subagent-roster";
+import { NATIVE_MODEL_ALIAS_KIND, nativeModelAliasSource } from "./native-model-aliases";
 
 const AUTO_REVIEW_ROOT_MARKER = "opencodex_auto_review_root";
 
@@ -57,20 +58,23 @@ function clearAutoReviewOverrideValue(entry: RawEntry): void {
  * Returns the stamped values when the observed rows match that shape.
  */
 function legacyRootStampValues(observedModels: readonly RawEntry[]): ReadonlySet<string> | undefined {
-  if (observedModels.some(entry => entry?.[AUTO_REVIEW_ROOT_MARKER] !== undefined)) return undefined;
-  const configuredValues = new Set(observedModels.flatMap(entry => {
+  // Fresh and retained aliases copy native values; neither is independent routed evidence
+  // of a legacy root stamp, nor may an inherited marker suppress genuine legacy cleanup.
+  const evidence = observedModels.filter(entry => entry?.opencodex_catalog_kind !== NATIVE_MODEL_ALIAS_KIND);
+  if (evidence.some(entry => entry?.[AUTO_REVIEW_ROOT_MARKER] !== undefined)) return undefined;
+  const configuredValues = new Set(evidence.flatMap(entry => {
     const value = entry?.auto_review_model_override;
     return typeof value === "string" && value.trim() ? [value] : [];
   }));
   const globalStamp = configuredValues.size === 1
-    && observedModels.some(entry => {
+    && evidence.some(entry => {
       const value = entry.auto_review_model_override;
       return isRoutedCatalogEntry(entry)
         && typeof value === "string"
         && value.trim().length > 0
         && configuredValues.has(value);
     })
-    && observedModels.every(entry => {
+    && evidence.every(entry => {
       const value = entry?.auto_review_model_override;
       return value === null
         || value === undefined
@@ -284,11 +288,14 @@ function providerModelKey(modelId: string): string {
  * alias can be persisted that later turns out to name a different row. A key using it is then not
  * an alternate spelling of the aliased model — it is that row's id — and must not be propagated.
  */
-function aliasNamesAnotherRoutedRow(models: readonly RawEntry[], provider: string, alias: string): boolean {
+function aliasNamesAnotherRoutedRow(models: readonly RawEntry[], provider: string, modelId: string, alias: string): boolean {
   const encoded = encodeRoutedModelId(alias);
   return models.some(entry => isRoutedCatalogEntry(entry)
     && catalogEntryProviderName(entry) === provider
-    && catalogEntryModelSegment(entry) === encoded);
+    && catalogEntryModelSegment(entry) === encoded
+    // A native projection of this source is the same model, not a competing model id.
+    // Other sources and genuine routed rows retain the existing collision protection.
+    && nativeModelAliasSource(entry) !== modelId);
 }
 
 /** Resolve one configured target against the assembled catalog; bare values name a model of the same provider. */
@@ -373,11 +380,11 @@ function buildProviderReviewPlans(
         }
       }
     }
-    // `modelAliases` publishes a second public name for a model id, and a routed row's slug always
-    // carries the upstream id — so accept an override key written in either spelling.
+    // `modelAliases` publishes a second public name for a model id. Ordinary routed rows carry
+    // the upstream id; same-source native projections must not block either override spelling.
     for (const [modelId, alias] of Object.entries(provider.modelAliases ?? {})) {
       if (typeof alias !== "string" || !alias.trim()) continue;
-      if (aliasNamesAnotherRoutedRow(models, name, alias)) continue;
+      if (aliasNamesAnotherRoutedRow(models, name, modelId, alias)) continue;
       const idKey = providerModelKey(modelId);
       const aliasKey = providerModelKey(alias);
       if (idKey === aliasKey) continue;
@@ -483,10 +490,22 @@ export function finalizeAutoReviewModelOverride(
   config?: Pick<OcxConfig, "providers">,
 ): AutoReviewModelOverrideResult {
   if (models && sourceModels.length > 0) preserveNativeAutoReviewModelOverrides(models, sourceModels);
-  if (config && configHasProviderAutoReview(config)) {
-    return applyConfiguredAutoReviewModelOverride(models, readConfiguredAutoReviewModel(), config, sourceModels);
+  const result = config && configHasProviderAutoReview(config)
+    ? applyConfiguredAutoReviewModelOverride(models, readConfiguredAutoReviewModel(), config, sourceModels)
+    : applyAutoReviewModelOverride(models, readConfiguredAutoReviewModel(), sourceModels);
+  // Merge admits only fresh aliases. Keep them available as explicit reviewer targets above,
+  // then inherit the finalized native policy, never the stale alias's own value or undo stamp.
+  const sources = new Map((models ?? []).map(entry => [entry.slug, entry]));
+  for (const entry of models ?? []) {
+    const sourceSlug = nativeModelAliasSource(entry);
+    const source = sourceSlug === undefined ? undefined : sources.get(sourceSlug);
+    if (!source) continue;
+    for (const key of ["auto_review_model_override", AUTO_REVIEW_ROOT_MARKER]) {
+      if (Object.hasOwn(source, key)) entry[key] = structuredClone(source[key]);
+      else delete entry[key];
+    }
   }
-  return applyAutoReviewModelOverride(models, readConfiguredAutoReviewModel(), sourceModels);
+  return result;
 }
 /**
  * Why an account-gated native model stopped being offered, but only when the answer is one the

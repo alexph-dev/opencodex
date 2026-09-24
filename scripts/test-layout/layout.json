@@ -167,7 +167,9 @@
     }
   },
   "explicit": {
+    "native-model-alias.test.ts": "codex-integration",
     "openai-chat-inline-think-overlay.test.ts": "adapters/openai",
+    "responses-native-model-alias.test.ts": "responses",
     "release-desktop-scripts.test.ts": "ci-workflows",
     "installed-gate-drivers.test.ts": "ci-workflows",
     "gui-desktop-sidecar-script.test.ts": "gui",

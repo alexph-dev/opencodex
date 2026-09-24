@@ -409,6 +409,28 @@ These fields are available in `config.json`, the provider management API, and th
 JSON provider editor. Dedicated form controls are not present. Native root stamps record the
 previous value and restore it on removal when the stamped value has not been changed externally.
 
+### Independent native model aliases
+
+On the canonical `openai` provider with ChatGPT forward authentication, an explicit native-model
+alias adds a separate picker row without renaming the ordinary model or changing the default.
+Use the owning CLI against the intended initialized, running proxy; inspect existing aliases first:
+
+```sh
+ocx alias list --json
+ocx alias set openai/gpt-6-astra Astra-Jev --json
+```
+
+Do not overwrite a different alias already assigned to that model. The command saves the partial
+alias update and performs guarded catalog convergence. Require `ok: true` and
+`catalogRefresh.status: "committed"`, then verify both selectors in the effective catalog/cache.
+Exit zero alone is not refresh proof. No custom model, combo takeover or manual native edit is needed.
+
+Select `openai/Astra-Jev`; the upstream remains `gpt-6-astra` with existing native credentials,
+account mode and destination. The alias derives instructions, tools, context limits, reasoning
+ladder and finalized reviewer policy from the actual native model. Ordinary rows and defaults
+remain unchanged. Configured-combo selector collisions are excluded even when the combo itself
+is omitted from discovery. API-key/third-party aliases do not gain this native metadata contract.
+
 ### Discovered model display names
 
 Use `modelDisplayNames` when a provider returns machine friendly ids but the Codex model picker
