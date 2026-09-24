@@ -216,16 +216,15 @@ const PASSTHROUGH: InlineThinkContentSplitter = {
 };
 
 /**
- * Opt-in recovery for `inlineThinkTagModels`. A model that is not listed gets a passthrough that
- * never inspects or rewrites visible content, so the 66 registry providers sharing the openai-chat
- * adapter keep byte-exact behavior.
+ * Recover inline thinking by default. An explicit model list narrows the behavior;
+ * an empty list disables it. This preserves the installed adapter's default.
  */
 export function createInlineThinkContentSplitter(
   models: string[] | undefined,
   modelId: string | undefined,
   budget?: TranslatorBudget,
 ): InlineThinkContentSplitter {
-  if (!modelInList(models, modelId ?? "")) return PASSTHROUGH;
+  if (models && !modelInList(models, modelId ?? "")) return PASSTHROUGH;
   const parser = new InlineThinkTagParser(budget, { interleaved: true });
   return {
     // An empty content delta stays an empty delta: it is a wire signal, not thinking.
