@@ -1,3 +1,4 @@
+import { astraJevLogDiagnostic, type AstraJevDiagnostic } from "./responses/astra-jev-types";
 import { existsSync, readFileSync } from "node:fs";
 import { randomBytes } from "node:crypto";
 import { stampApiKeyAccountLabel, usesApiKeyAccount } from "../providers/label";
@@ -102,6 +103,8 @@ function cacheDiagnosticHooks(): CacheDiagnosticHooks | undefined {
 }
 
 export interface RequestLogContext {
+  /** Content-free adaptive decision, retained only in the live log ring (not usage.jsonl). */
+  astraJev?: AstraJevDiagnostic;
   model: string;
   provider: string;
   /** Optional process-lifetime aggregate sink, injected by the server composition owner. */
@@ -271,6 +274,8 @@ export function rebindCacheDiagnosticBody(
 }
 
 export interface RequestLogEntry {
+  /** Ephemeral diagnostic; intentionally absent from the durable usage schema. */
+  astraJev?: AstraJevDiagnostic;
   requestId: string;
   /** The logical request this row belongs to (#4546); absent on rows written without a budget. */
   logicalRequestId?: string;
@@ -595,6 +600,7 @@ export function addRequestLog(entry: RequestLogEntry) {
     && servedModel === entry.servedModel
     && entry.claudeCompatibility === undefined
     && entry.jevDecision === undefined
+    && entry.astraJev === undefined
     ? entry
     : { ...entry, ...(shadowCallRewrittenFrom ? { shadowCallRewrittenFrom } : {}) };
   if (!shadowCallRewrittenFrom && retained !== entry) delete retained.shadowCallRewrittenFrom;
@@ -606,6 +612,9 @@ export function addRequestLog(entry: RequestLogEntry) {
   else if (retained !== entry) delete retained.claudeCompatibility;
   if (jevDecision) retained.jevDecision = jevDecision;
   else if (retained !== entry) delete retained.jevDecision;
+  const astraJev = astraJevLogDiagnostic(entry.astraJev, entry.status === 499);
+  if (astraJev) retained.astraJev = astraJev;
+  else if (retained !== entry) delete retained.astraJev;
   entry = retained;
   retainRequestLogEntry(entry);
   for (const observer of requestLogObserversForTests) {
@@ -1530,8 +1539,10 @@ export function addFinalRequestLog(
   const jevDecision = normalizePersistedJevDecision(logCtx.jevDecision);
   // Keyed by the live attempt objects, not the detached copies above.
   const protocolTrace = protocolTraceForRequest(logCtx, logCtx.attempts);
+  const astraJev = astraJevLogDiagnostic(logCtx.astraJev, effectiveStatus === 499);
   addLog({
     requestId,
+    ...(astraJev ? { astraJev } : {}),
     ...(isLogicalRequestId(logicalRequestId) ? { logicalRequestId } : {}),
     timestamp: start,
     model: isCombo ? logCtx.requestedModel! : logCtx.model,

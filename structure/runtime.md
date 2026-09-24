@@ -11,8 +11,8 @@ evidence remain late and cannot widen a captured static limit.
 
 Virtual models are the sole model-identity transition: the ordinary and compact paths preserve the
 selected public id in diagnostics, rewrite `route.modelId` to the upstream wire id, and atomically
-replace `route.staticPolicy` before adapter or capability decisions continue. Model aliases are
-resolved before the route result is built, so their policy is already keyed by the native wire id.
+replace `route.staticPolicy` before adapter or capability decisions continue. Model aliases resolve
+before policy capture; the opt-in [Astra-Jev policy](transports/responses.md#adaptive-astra-jev-effort) uses that same native wire identity and captured adapter authority.
 Live selector hints obey the [credential-scoped cache contract](catalog.md): a selection change
 cannot reuse the previous credential's roster to choose an alias target. Passive OAuth observation
 neither refreshes credentials nor repairs their storage.

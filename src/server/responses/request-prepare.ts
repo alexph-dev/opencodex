@@ -1,4 +1,7 @@
 import type { ResponsesRequestContext, ResponsesAdmissionState, ResponsesDispatchers } from "./core-options";
+import { captureAstraJevInvocation, applyAstraJevEffort } from "./astra-jev";
+import { ASTRA_JEV_SELECTOR } from "./astra-jev-types";
+import { publicContextAncestryKnown } from "../../responses/state/public-context-proof";
 import {
   agentTaskRecoveryConfig,
   restoreCachedEncryptedAgentTasks,
@@ -160,6 +163,8 @@ export async function prepareResponsesRequest(
     }
     return decodeRequestErrorResponse(err, "responses");
   }
+  const astraJevSelected = inboundWire === "responses" && !options.comboAttempt
+    && (body as { model?: unknown } | null)?.model === ASTRA_JEV_SELECTOR;
   observeCacheDiagnosticInbound(
     logCtx,
     body,
@@ -294,6 +299,12 @@ export async function prepareResponsesRequest(
   const previousResponseInputExpanded = options.comboReplaySnapshot?.previousResponseInputExpanded
     ?? (body !== originalBody
       && typeof (body as { previous_response_id?: unknown }).previous_response_id === "string");
+
+  // Capture public evidence before encrypted-task repair or parser normalization. Invalid parent
+  // errors retain their existing path; the evaluator runs only after the later continuation gate.
+  options.astraJevInvocation ??= captureAstraJevInvocation(body, astraJevSelected,
+    publicContextAncestryKnown(body)
+      && (!(body as { previous_response_id?: unknown } | null)?.previous_response_id || previousResponseInputExpanded));
 
   // Spawn-message compatibility (both directions): agent_message task payloads ride in
   // encrypted_content slots as plaintext. Rewrite them to input_text on the RAW body BEFORE
@@ -1097,6 +1108,10 @@ export async function prepareResponsesRequest(
   // upstream for reliability (#875); the answer must then be reframed to SSE
   // for streaming clients.
   const clientRequestedStream = parsed.stream;
+  if (options.astraJevInvocation) {
+    options.abortSignal = options.abortSignal ? AbortSignal.any([req.signal, options.abortSignal]) : req.signal;
+    if (!await applyAstraJevEffort({ invocation: options.astraJevInvocation, parsed, route, config, logCtx, signal: options.abortSignal })) return clientCancelledResponse();
+  }
   await applyFinalRouteRequestNormalization({
     parsed,
     route,
