@@ -2,6 +2,7 @@
   "astra-jev-client.test.ts": "responses",
   "astra-jev-context.test.ts": "responses",
   "astra-jev-repeated-context.test.ts": "responses",
+  "codex-sync-cache-noop.test.ts": "codex-integration",
   "native-model-alias.test.ts": "codex-integration",
   "openai-chat-inline-think-overlay.test.ts": "adapters/openai",
   "responses-astra-jev.test.ts": "responses",

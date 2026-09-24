@@ -649,11 +649,11 @@ export async function syncCatalogModels(
   };
 }
 
-export function invalidateCodexModelsCacheWithPermit(
+export function invalidateCodexModelsCacheWithPermitOutcome(
   permit: CatalogWritePermit,
   owningCodexHome: string,
   options?: CodexCatalogSyncOptions,
-): boolean {
+): "written" | "unchanged" | false {
   try {
     // This permit is a REACQUISITION: refreshCodexModelCatalog's commit released
     // K before this rewrite runs, so the commit-path desired-state check cannot
@@ -707,16 +707,25 @@ export function invalidateCodexModelsCacheWithPermit(
     // catalog reproduced byte-identically — the settled case — the warning still
     // claimed "Disk catalog/cache were updated" and told the operator their Codex
     // model list might be stale, when nothing on disk had changed and Codex held the
-    // same model set the file already described. Returning `false` here makes
+    // same model set the file already described. The boolean wrapper returns `false` for unchanged bytes, making
     // `cacheSynced` mean what its name and its consumers already assume, and what
     // `pullRemoteCatalog` and the early returns in `refreshCodexModelCatalog`
     // already assert: a write happened.
-    if (!preparedBytesDifferFromDisk(preparedCache)) return false;
+    if (!preparedBytesDifferFromDisk(preparedCache)) return "unchanged";
     replaceCodexModelsCache(permit, owningCodexHome, preparedCache);
-    return true;
+    return "written";
   } catch {
     return false;
   }
+}
+
+/** Preserve the existing write-only boolean contract for startup and management callers. */
+export function invalidateCodexModelsCacheWithPermit(
+  permit: CatalogWritePermit,
+  owningCodexHome: string,
+  options?: CodexCatalogSyncOptions,
+): boolean {
+  return invalidateCodexModelsCacheWithPermitOutcome(permit, owningCodexHome, options) === "written";
 }
 
 export function invalidateCodexModelsCache(options?: CodexCatalogSyncOptions): boolean {

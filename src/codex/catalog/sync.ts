@@ -47,6 +47,7 @@ export {
   syncCatalogModels,
   invalidateCodexModelsCache,
   invalidateCodexModelsCacheWithPermit,
+  invalidateCodexModelsCacheWithPermitOutcome,
 } from "./retained-sync";
 export type { CodexCatalogSyncOptions } from "./retained-sync";
 export { restoreCodexCatalog, restoreCodexCatalogWithPermit } from "./restore";
