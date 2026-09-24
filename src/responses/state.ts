@@ -1,6 +1,7 @@
 import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, unlinkSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { atomicWriteFileAsync, getConfigDir, resolveWriteTarget } from "../config";
+import { observePublicContextRoot, recordPublicContextProof, copyPublicContextProof } from "./state/public-context-proof";
 import { enforceAppOwnedMemoryBudget, type RetainedStoreSnapshot } from "../lib/app-owned-memory";
 import { windowsSecretAclApplies } from "../lib/windows-secret-acl";
 import type { OcxProviderContinuationState } from "../types";
@@ -455,9 +456,10 @@ function replaceSpillEntryAtomically(
   }
 }
 
-function setResidentEntry(id: string, entry: ResidentInput): void {
+function setResidentEntry(id: string, entry: ResidentInput, publicRequest?: unknown): void {
   const expected = states.get(id);
   const candidate = measureResidentEntry(id, entry);
+  if (candidate) recordPublicContextProof(publicRequest, candidate);
   if (!candidate) {
     replaceWithSpillFailure(id, expected);
     // A tombstone is tiny but still resident state: the hard-cap invariant
@@ -1046,6 +1048,7 @@ function normalizedClientThreadId(value: unknown): string | undefined {
 export function expandPreviousResponseInput(body: unknown, clientThreadId?: string): unknown {
   if (!body || typeof body !== "object" || Array.isArray(body)) return body;
   const request = body as Record<string, unknown>;
+  observePublicContextRoot(request);
   const previousId = typeof request.previous_response_id === "string" ? request.previous_response_id : undefined;
   if (!previousId) return body;
   ensureLoaded();
@@ -1096,6 +1099,7 @@ export function expandPreviousResponseInput(body: unknown, clientThreadId?: stri
       // not re-acknowledge historical compaction markers (parser.ts) and stays visible to
       // guidance de-duplication (collaboration.ts).
       replayedInputPrefixLengths.set(unchanged, carried);
+      copyPublicContextProof(previous, unchanged);
       return unchanged;
     }
   }
@@ -1104,6 +1108,7 @@ export function expandPreviousResponseInput(body: unknown, clientThreadId?: stri
     input: [...materialized.state.items, ...inputItems(request.input)],
   };
   replayedInputPrefixLengths.set(expanded, materialized.state.items.length);
+  copyPublicContextProof(previous, expanded);
   return expanded;
 }
 
@@ -1127,6 +1132,7 @@ export function copyPreviousResponseReplayProvenance(source: unknown, target: un
   const input = (target as { input?: unknown }).input;
   if (!Array.isArray(input) || prefixLength > input.length) return;
   replayedInputPrefixLengths.set(target, prefixLength);
+  copyPublicContextProof(source, target);
 }
 
 /** True when this exact request could not replay because its task scope did not match. */
@@ -1278,7 +1284,7 @@ export function rememberResponseState(
     // incomplete agent turn on the Cursor side (we suspended without a real mcpResult), so its
     // checkpoint must not be reused — but the conversation id string itself is still valid.
     ...(Object.keys(normalizedProviderState).length > 0 ? { providers: normalizedProviderState } : {}),
-  });
+  }, response.status !== "incomplete" && !previousResponseScopeMismatch(request) ? request : undefined);
   enforceAppOwnedMemoryBudget();
   schedulePersist();
 }

@@ -1,4 +1,5 @@
 import { sanitizeLogMetadataString } from "../../lib/redact";
+import { recordAstraJevFinalEffort } from "./astra-jev";
 import type { RouteResult } from "../../router";
 import type { InboundWire } from "../../providers/registry";
 import { resolveWireProtocolOverride } from "../adapter-resolve";
@@ -296,6 +297,7 @@ export async function applyFinalRouteRequestNormalization(args: {
       logCtx.requestedEffort = `${logCtx.requestedEffort ?? "max"}->${clamped}`;
     }
   }
+  recordAstraJevFinalEffort(logCtx, parsed, route);
   recordAttemptRequestedEffort(logCtx);
   logCtx.modelSupportsServiceTier = SERVICE_TIER_ADAPTERS.has(route.provider.adapter)
     ? modelServiceTierSupport

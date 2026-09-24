@@ -16,6 +16,7 @@ import type { TranslatorBudget } from "../../lib/translator-budget";
 import type { TransientSendBudget } from "../../lib/upstream-retry";
 import type { RequestLogContext } from "../request-log";
 import type { UpstreamHostAdmissionLease } from "../../codex/upstream-host-health";
+import type { AstraJevInvocation } from "./astra-jev-types";
 
 export interface ConsumedComboFailure {
   response: Response;
@@ -40,6 +41,8 @@ export interface ConsumedComboFailure {
 
 
 export interface HandleResponsesOptions {
+  /** Internal one-decision holder; never accepted from client JSON/headers or persisted. */
+  astraJevInvocation?: AstraJevInvocation;
   /** Internal Claude replay identity; consumed only by the final canonical Go transport. */
   claudeGoAffinity?: { sessionLane?: string };
   /** Validated Claude metadata identity; projected only into final canonical attempt headers. */

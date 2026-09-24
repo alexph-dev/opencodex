@@ -167,8 +167,12 @@
     }
   },
   "explicit": {
+    "astra-jev-client.test.ts": "responses",
+    "astra-jev-context.test.ts": "responses",
+    "astra-jev-repeated-context.test.ts": "responses",
     "native-model-alias.test.ts": "codex-integration",
     "openai-chat-inline-think-overlay.test.ts": "adapters/openai",
+    "responses-astra-jev.test.ts": "responses",
     "responses-native-model-alias.test.ts": "responses",
     "release-desktop-scripts.test.ts": "ci-workflows",
     "installed-gate-drivers.test.ts": "ci-workflows",

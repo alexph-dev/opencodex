@@ -431,6 +431,127 @@ ladder and finalized reviewer policy from the actual native model. Ordinary rows
 remain unchanged. Configured-combo selector collisions are excluded even when the combo itself
 is omitted from discovery. API-key/third-party aliases do not gain this native metadata contract.
 
+### Adaptive Astra-Jev effort (opt-in)
+
+The static alias alone makes no evaluator call. To enable request-level effort selection, supply
+`OCX_ASTRA_JEV_ENABLED=1` and `TYPESAFE_API_KEY` through the intended proxy's existing process
+environment/secret owner. Keep the key out of source, transcripts and native configuration.
+A key alone is inactive. No new provider or durable configuration schema is required.
+
+Only the exact alias on canonical native Responses forwarding evaluates. Ordinary models,
+converted Chat/Messages ingress, native compact and warmup do not. The fixed TypeSafe endpoint
+is `https://api.typesafe.ai/v1/systemone`, model `jev-latest`; it receives bounded public context
+and an effort Choice over the actual native ladder. Source instructions are evidence, not evaluator
+instructions. Tool failures and corrective work may inform the decision. Pins/caps and native
+constraints still win, including Ultra-to-Max inference normalization; no delegation mode is added.
+
+Long text sessions first try complete public context, then lossless references for exactly repeated
+user, system and developer messages, before using bounded beginning/recent-tail selection.
+Each reference reuses the full earlier same-role message at its original chronological position;
+the evaluator receives the original text and an explicit reference-format rule. Changed constraints,
+even in the middle of otherwise identical text, are not merged. No summaries, envelope stripping,
+cross-request cache or native history edits are involved. A reference-compressed complete history is
+reported as `selectionMode=referenced`, not `full`. Jev may select equal/higher effort, but a
+downshift is vetoed until credentialed semantic probes establish that the custom reference schema is
+interpreted reliably; API acceptance and a real Choice alone do not establish that. If the
+reference-compressed representation still does not fit, bounded sampling restarts from the original
+whole messages rather than placing `message_repeat` inside an incomplete history. Every
+top-level `source_instructions` field remains whole. Historical user, developer and system messages
+are separate request-level state; they are not assumed to share the source-instruction field's scope.
+If distinct protected text is too large, the selector retains the latest message of each protected
+role as a recency anchor without assuming it supersedes older instructions, plus the latest semantic
+unit and up to two most recent explicitly failed execution groups. Older protected messages can be
+omitted only whole, with chronological markers that state their constraints and scope are unknown
+and expose only content-free omitted-message/byte counts. No omitted protected prefix, suffix, hash,
+summary or extracted constraint is sent. Only a tool result's projected `failed`
+status counts, not words such as "failed" in text. Parallel call/result intervals remain together;
+multiple failures in one batch count as one group, and absent calls are never invented. A directly
+following public assistant explanation is preferred over optional history if it fits whole after
+the required anchors. No correction or success is inferred from that adjacency. If mandatory text,
+failure anchors and omission markers cannot fit, evaluation skips instead of discarding constraints
+or failures. Remaining capacity favors approximately 20% beginning and 80% recent tail. A whole
+beginning unit may cross the head target because protected text is never sliced; the recent tail
+stops at the first whole unit that cannot fit. Known call/result intervals are not split. Explicit
+chronological markers identify omitted spans and their unknown outcomes/constraints; this is
+selection, not a summary or proof that omitted work succeeded. Required context
+takes priority over the proportion and still produces `context_budget` when it cannot fit.
+The limits are 96 KiB serialized state (including the requested baseline), 256 projected rows
+including markers, and a 112 KiB complete evaluator request. Complete permitted context is tried
+first; a larger complete projection may still downshift. Exact repeated occurrences are counted
+as `repeatedMessages` in the existing content-free diagnostic, separately from omitted items.
+Distinct mandatory source/latest-role/failure context that still exceeds these bounds remains
+baseline-only. These are local byte limits, not vendor
+token limits. All supplied public history is inspected before selection, up to 4,096 items
+and 4 MiB of text/projected work; exceeding those local bounds skips. Native forwarding retains
+the full original request, and current controls or unknown items cannot be hidden in an omitted span.
+Tool text is bounded and omissions labelled; private reasoning, encrypted blobs and media bytes
+are not sent. Historical user image/audio/file parts may be replaced by a fixed
+unknown-content marker when a later text-only user turn supplies the current goal. That projection
+is reported as `selectionMode=withheld`: Jev may still choose a higher effort, but a lower choice is
+kept only as diagnostic evidence and the native baseline is preserved because the withheld media
+could contain constraints. Media in the current user turn still skips evaluation. Valid developer
+`additional_tools` Lite envelopes become only chronological omission
+markers: tool schemas, descriptions, defaults and private declaration fields are not sent or
+summarized. Native forwarding retains the declaration. Input-based instructions remain public state.
+The structured-tool inspection cutoff remains independently fixed at 65,536 UTF-16 code units;
+larger transmission limits do not make private or previously uninspectable tool content eligible.
+
+Opaque `prompt` declarations and their descendants remain baseline-only; no prompt is fetched or
+reconstructed. Native configuration updates, compaction, unsupported/incomplete history,
+current-turn user media and unproven ancestry also skip evaluation. Reloaded/spilled continuations
+have no transient proof.
+Missing or mismatched parent state retains the native protocol error. Fixing Lite declarations does
+not make old control-bearing histories adaptive; use a fresh eligible session for positive acceptance.
+
+One decision is reused across retries. Malformed, contradictory or non-normalized Choice responses
+fall back to baseline. Probability mass and maximality use `1e-6` rounding tolerance; ties and valid
+low-confidence choices are accepted without a confidence/correctness threshold. The evaluator has
+one 2.5-second fetch/body deadline, a 16 KiB response limit and no retry. Caller cancellation prevents
+late inference dispatch, but cannot undo a request an upstream already accepted.
+
+On the newly expanded path (state over 64 KiB or complete request over 80 KiB), a valid Choice
+also needs a versioned Jev response model and nonnegative integer `usage.input_tokens` no greater
+than 30,000. Missing/malformed usage or higher usage retains baseline. This is an operating target,
+not a correctness threshold. [TypeSafe documents](https://docs.typesafe.ai/models) 32k tokens for
+state plus the longest question and 64k overall; byte sizes cannot prove tokenizer fit. The
+[documented usage field](https://docs.typesafe.ai/api) arrives after the request, not before sending,
+and cannot by itself prove the provider did not silently truncate. No preflight tokenizer or
+no-silent-truncation guarantee is established here. Requests are never retried with deleted constraints.
+
+Until sampled-history judgment quality is accepted, a newly sampled view cannot lower the requested
+baseline. The diagnostic retains Jev's actual choice with `status: "skipped"` and
+`reason: "sampled_downshift_veto"`; no explicit baseline yields `sampled_baseline_unknown` instead
+of an invented default. Equal/higher choices remain eligible. Existing full public projections,
+including their established privacy/tool-output exclusions, retain downshifts. The native effort
+ordering and Ultra-to-Max conversion are shared with normal forwarding; native pins/caps still win.
+This safeguard does not prove the baseline is sufficient, or establish savings from sampled history.
+
+Read the live content-free diagnostic through the existing command:
+
+```sh
+ocx logs --model gpt-6-astra --limit 20 --json
+```
+
+Inspect `logs[].astraJev`: `selectedAlias`, `requestedBaseline`, `evaluatorChoice`, `finalEffort`,
+`status`, `reason`, `evaluationMs`, plus numeric/enum observations `protectedBytes`, `stateBytes`,
+`requestBytes`, `omittedItems`, `omittedProtectedMessages`, `omittedProtectedBytes`,
+`repeatedMessages`, `withheldMediaItems`, `selectionMode`, `budgetOwner`,
+`providerInputTokens`, `evaluatorModel` and `preprocessingMs`.
+The protected omission counters are content-free counts/serialized projected bytes, not hashes or
+summaries. Full mode with zero omitted items means no new history sampling, not that
+private reasoning or declarations were sent. Null means unobserved. Budget-owner values identify
+inspection/required-state/item, exact client state/request, or provider-token limits without logging
+text. `invalid_usage` and `provider_token_budget` preserve baseline. Preprocessing measures projection
+and serialization separately from the fetch/body deadline; client latency includes serialization,
+so those timings are not additive. A skip/failure is not an applied override. `constrained` records
+a native policy changing the choice. These fields are not durable history and disappear on ring
+eviction/restart. The native effort picker does not display proxy overrides.
+
+Disable adaptation by removing the opt-in through the process owner. Leave the alias for static
+forwarding, or remove it using `ocx alias rm openai/gpt-6-astra --json` and require the same committed
+refresh/read-back. Do not hand-edit native catalog/cache/history. Real evaluator usefulness, overhead,
+cost and signed-client tools/session behavior require separate acceptance before daily enablement.
+
 ### Discovered model display names
 
 Use `modelDisplayNames` when a provider returns machine friendly ids but the Codex model picker

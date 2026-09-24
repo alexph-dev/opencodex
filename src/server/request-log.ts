@@ -1,3 +1,4 @@
+import { astraJevLogDiagnostic, type AstraJevDiagnostic } from "./responses/astra-jev-types";
 import { existsSync, readFileSync } from "node:fs";
 import { randomBytes } from "node:crypto";
 import { stampApiKeyAccountLabel, usesApiKeyAccount } from "../providers/label";
@@ -92,6 +93,8 @@ function cacheDiagnosticHooks(): CacheDiagnosticHooks | undefined {
 }
 
 export interface RequestLogContext {
+  /** Content-free adaptive decision, retained only in the live log ring (not usage.jsonl). */
+  astraJev?: AstraJevDiagnostic;
   model: string;
   provider: string;
   /** Optional process-lifetime aggregate sink, injected by the server composition owner. */
@@ -250,6 +253,8 @@ export function rebindCacheDiagnosticBody(
 }
 
 export interface RequestLogEntry {
+  /** Ephemeral diagnostic; intentionally absent from the durable usage schema. */
+  astraJev?: AstraJevDiagnostic;
   requestId: string;
   /** The logical request this row belongs to (#4546); absent on rows written without a budget. */
   logicalRequestId?: string;
@@ -557,12 +562,15 @@ export function addRequestLog(entry: RequestLogEntry) {
   // sanitization bug because the safe surface is the one you check.
   const shadowCallRewrittenFrom = sanitizeLogMetadataString(entry.shadowCallRewrittenFrom);
   const claudeCompatibility = normalizeClaudeCompatibilityUsageLog(entry.claudeCompatibility);
-  const retained: RequestLogEntry = shadowCallRewrittenFrom === entry.shadowCallRewrittenFrom && entry.claudeCompatibility === undefined
+  const retained: RequestLogEntry = shadowCallRewrittenFrom === entry.shadowCallRewrittenFrom && entry.claudeCompatibility === undefined && entry.astraJev === undefined
     ? entry
     : { ...entry, ...(shadowCallRewrittenFrom ? { shadowCallRewrittenFrom } : {}) };
   if (!shadowCallRewrittenFrom && retained !== entry) delete retained.shadowCallRewrittenFrom;
   if (claudeCompatibility) retained.claudeCompatibility = claudeCompatibility;
   else if (retained !== entry) delete retained.claudeCompatibility;
+  const astraJev = astraJevLogDiagnostic(entry.astraJev, entry.status === 499);
+  if (astraJev) retained.astraJev = astraJev;
+  else if (retained !== entry) delete retained.astraJev;
   entry = retained;
   retainRequestLogEntry(entry);
   for (const observer of requestLogObserversForTests) {
@@ -1485,8 +1493,10 @@ export function addFinalRequestLog(
   // the in-memory /api/logs row matches what usage.jsonl already stores.
   const shadowCallRewrittenFrom = sanitizeLogMetadataString(logCtx.shadowCallRewrittenFrom);
   const claudeCompatibility = normalizeClaudeCompatibilityUsageLog(logCtx.claudeCompatibility);
+  const astraJev = astraJevLogDiagnostic(logCtx.astraJev, effectiveStatus === 499);
   addLog({
     requestId,
+    ...(astraJev ? { astraJev } : {}),
     ...(isLogicalRequestId(logicalRequestId) ? { logicalRequestId } : {}),
     timestamp: start,
     model: isCombo ? logCtx.requestedModel! : logCtx.model,

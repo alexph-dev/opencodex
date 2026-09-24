@@ -13,6 +13,7 @@ import type {
 } from "../types";
 import { createToolChoiceResolver, namespacedToolName } from "../types";
 import { responsesRequestSchema } from "./schema";
+import { nativeRequestReasoningEffort } from "./request-effort";
 import { providerMetadataFromResponsesFunctionCall } from "./provider-opaque-metadata";
 import { lookupReplayThoughtSignature } from "./thought-signature-replay";
 import { compactionItemToText, isCompactionItemType } from "./compaction";
@@ -537,7 +538,7 @@ export function parseRequest(
   // `reasoning_effort_for_request`), so current clients never send it — but a catalog that
   // advertises ultra plus an older/direct caller can. Degrade it to max like upstream instead of
   // silently dropping reasoning altogether.
-  const requestedEffort = data.reasoning?.effort === "ultra" ? "max" : data.reasoning?.effort;
+  const requestedEffort = nativeRequestReasoningEffort(data.reasoning?.effort);
   if (requestedEffort && REASONING_EFFORTS.has(requestedEffort)) {
     options.reasoning = requestedEffort;
   }
