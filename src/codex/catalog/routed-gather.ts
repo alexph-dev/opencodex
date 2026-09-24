@@ -47,6 +47,7 @@ import { parseAntigravityAvailableModels, registerAntigravityDiscoveredWireModel
 import { applyProviderContextCap, providerContextCap, resolveUnknownRoutedContextWindow } from "../../providers/context-cap";
 import { clampAutoCompactTokenLimit } from "../../providers/auto-compact-budget";
 import { effectiveModelAliases } from "../../providers/default-aliases";
+import { gatherNativeModelAliases } from "./native-model-aliases";
 import { routedSlug, slugEquals, slugEquivalenceKey, slugsEquivalent } from "../../providers/slug-codec";
 import { CODEX_GPT5_IDENTITY_LINE } from "../../adapters/identity";
 import { filterCursorConfiguredModelsByLiveDiscovery } from "../../adapters/cursor/discovery";
@@ -322,6 +323,8 @@ async function gatherRoutedModelsUncached(
   config: OcxConfig,
   capture: GatherFlightCapture,
 ): Promise<GatherFlightResult> {
+  // Native aliases are configuration evidence, captured before provider discovery can yield.
+  const nativeAliasCandidates = gatherNativeModelAliases(config);
   // Flight-local list: joiners copy from the resolved promise, not a process-global last write.
   const localOmissions: ComboCatalogOmission[] = [];
   const localProviderAuthOutcomes = capture.providerAuthOutcomes;
@@ -740,7 +743,9 @@ async function gatherRoutedModelsUncached(
   // Custom rows override discovered rows that encode to the same Codex-facing slug.
   const customKeys = new Set(customModels.map(c => routedSlug(c.provider, c.id)));
   const deduped = all.filter(m => !customKeys.has(routedSlug(m.provider, m.id)));
-  const models = [...deduped, ...customModels];
+  const ordinaryModels = [...deduped, ...customModels];
+  const ordinarySlugs = new Set(ordinaryModels.map(catalogModelSlug));
+  const models = [...ordinaryModels, ...nativeAliasCandidates.filter(model => !ordinarySlugs.has(catalogModelSlug(model)))];
   // ponytail: catalog-scale scan; index ids by provider if catalog growth makes this measurable.
   const aliasDisplayNames = new Map(activeProviders.flatMap(({ name, provider }) => {
     const providerModels = models.filter(model => model.provider === name);

@@ -34,7 +34,7 @@ import upstreamModelsSnapshot from "../data/upstream-models.json";
 import { NATIVE_OPENAI_CONTEXT_OVERRIDES, SUPPORTED_NATIVE_OPENAI_SLUGS, UPSTREAM_NATIVE_ENTRIES, hasNativeOpenAiCapabilityMetadata, nativeMultiAgentVersion, nativeOpenAiAutoCompactTokenLimit, nativeOpenAiContextWindow, nativeOpenAiMaxInputTokens, type NativeContextLimitsInput } from "./metadata";
 import { clampAutoCompactTokenLimit } from "../../providers/auto-compact-budget";
 import { trustedAccountBoundNativeCatalogSlug } from "./account-models";
-import { CODEX_NATIVE_ALIAS_CATALOG_KIND } from "./kinds";
+import { CODEX_NATIVE_ALIAS_CATALOG_KIND, NATIVE_MODEL_ALIAS_KIND } from "./kinds";
 import { NATIVE_GPT6_ASTRA_MODEL } from "./native-models";
 import { recordOwnedConfigPath } from "../../lib/config-ownership";
 
@@ -99,7 +99,7 @@ export interface CatalogModel {
   provider: string;
   /** Canonical or configured short alias for the provider segment. */
   providerAlias?: string | null;
-  /** Public Codex-facing slug override (used by combo aliases). */
+  /** Public Codex-facing slug override (combo or additive native model alias). */
   alias?: string;
   /** Explicit combo takeover of a bare OpenAI-native catalog id. */
   nativeAlias?: boolean;
@@ -171,7 +171,7 @@ export interface CatalogModel {
    */
   pricingStatus?: "free" | "paid";
   /** OpenCodex-only catalog ownership marker; Codex ignores the serialized extension field. */
-  catalogKind?: typeof CODEX_CUSTOM_MODEL_CATALOG_KIND | typeof CODEX_PROVIDER_MODEL_CATALOG_KIND;
+  catalogKind?: typeof CODEX_CUSTOM_MODEL_CATALOG_KIND | typeof CODEX_PROVIDER_MODEL_CATALOG_KIND | typeof NATIVE_MODEL_ALIAS_KIND;
 }
 
 export type RawEntry = Record<string, unknown>;
