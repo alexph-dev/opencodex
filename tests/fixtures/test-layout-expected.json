@@ -7,6 +7,7 @@
     "release-desktop-scripts.test.ts": "ci-workflows",
 
   "native-model-alias.test.ts": "codex-integration",
+  "codex-sync-cache-noop.test.ts": "codex-integration",
   "astra-jev-client.test.ts": "responses",
   "astra-jev-context.test.ts": "responses",
   "astra-jev-repeated-context.test.ts": "responses",

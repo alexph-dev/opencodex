@@ -978,8 +978,8 @@ export interface OcxProviderConfig {
    * leaves its chain of thought inline in `content` as `<think>` / `<thinking>` / `<reasoning>`
    * blocks and never sends `reasoning_content` or `reasoning_details`. Without this the whole
    * chain of thought renders as the answer. The openai-chat adapter then splits those blocks back
-   * into reasoning. Off by default and narrow on purpose: 66 registry providers share this
-   * adapter, and a gateway that does parse reasoning must not have its visible content rewritten.
+   * into reasoning. Recovery is on by default and activates only for a leading tag.
+   * An explicit list narrows eligible models; an empty list disables recovery.
    * Prefer a provider-side parser or `reasoningSplitModels` when the upstream supports either.
    */
   inlineThinkTagModels?: string[];

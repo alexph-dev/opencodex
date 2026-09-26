@@ -5,8 +5,7 @@ Explicit Codex CLI installation observation supplies no selected-runtime proof t
 
 Native steering follows [the shared WebSocket contract](transports/streaming-health.md#experimental-native-mid-turn-steering); this surface's defaults remain unchanged.
 
-Catalog discovery remains separate from the Responses final-route
-[core module ownership](transports/responses.md#core-module-ownership). This surface retains its existing behavior.
+Catalog discovery remains separate from the Responses final-route [core module ownership](transports/responses.md#core-module-ownership). This surface retains its existing behavior.
 
 The configuration-only [plaintext V2 contract](subagents.md#plaintext-v2-agent-messages)
 is scoped to canonical ChatGPT Responses forwarding; other source-area behavior described here is unchanged. CLI installation inspection reason codes, including Windows deferral, follow the [runtime inspection contract](runtime.md#lifecycle).
@@ -17,32 +16,9 @@ Shared parsing and streaming follow the [request-copy](transports/byte-accountin
 
 `src/codex/catalog/remote.ts` permits loopback HTTP only when Bun fetch has no effective HTTP proxy or a matching NO_PROXY bypass. Its local matcher follows [Bun fetch semantics](https://github.com/oven-sh/bun/blob/744846f844374847c902b5e7fd59b4342a51ef99/src/dotenv/env_loader.rs#L369), including non-empty lowercase-variable priority, ASCII whitespace, literal host/port comparison and bracket-preserving IPv6. It does not normalize URL-shaped bypass entries, paths, wildcard prefixes, trailing dots or Unicode whitespace, and leaves the broader WebSocket proxy grammar unchanged. It refuses before authentication headers and fetch with a content-free `insecure_http_refused` error. ALL_PROXY and HTTPS-only settings do not affect HTTP acquisition; HTTPS and existing redirect, size, validation and coordinated-installation contracts are preserved. `tests/codex-integration/catalog-remote-pull.test.ts` covers these routing and non-disclosure boundaries.
 
-Accounts added through the [Orca import](codex-home.md#orca-source-owned-account-import) remain
-validation-pending. Import alone supplies no entitlement evidence for the model catalog.
+Accounts added through the [Orca import](codex-home.md#orca-source-owned-account-import) remain validation-pending. Import alone supplies no entitlement evidence for the model catalog.
 
-## Additive native model aliases
-
-`src/codex/catalog/native-model-aliases.ts` projects an explicitly configured canonical OpenAI
-forward alias as a second selector, never a takeover of the ordinary native model. Admission
-captures the alias before asynchronous discovery. Known model IDs, duplicate aliases and complete
-selectors owned by configured combos are excluded, including combos omitted from the catalog for
-incomplete or incompatible capabilities. Existing routing precedence is unchanged.
-
-The builder derives the alias from actual native metadata. Merge rebases fresh aliases from the
-normalized native row, retaining instructions, model messages, tools, context limits, reasoning
-ladder and native support metadata. Only selection/presentation and provenance fields differ.
-The shared auto-review finalizer excludes fresh and retained aliases from legacy-root inference,
-then copies effective reviewer metadata and detached provenance from the finalized native source.
-A valid same-source alias is not a competing model for alias-keyed reviewer propagation; genuine
-competing rows, different sources and invalid provenance retain the collision guard.
-
-Alias publication is additive: ordinary entries/defaults and retained foreign rows are preserved,
-removal deletes generated aliases, and unfeatured aliases follow ordinary entries in picker order.
-The existing alias CLI performs guarded catalog convergence; a saved setting alone does not prove
-publication. `tests/codex-integration/native-model-alias.test.ts` and
-`tests/responses/responses-native-model-alias.test.ts` cover catalog/finalization, collisions and
-native HTTP/WebSocket/compact paths. The separate opt-in
-[Astra-Jev request policy](transports/responses.md#adaptive-astra-jev-effort) changes no catalog capacity.
+Native alias projection and reviewer rules are in [Native Catalog Aliases](catalog-native-aliases.md).
 
 ## Shared catalog
 
@@ -591,7 +567,7 @@ Live sideband admission and its bounded upstream handshake follow the [runtime c
 
 ## Provider-scoped approval reviewer
 
-`src/codex/catalog/auto-review.ts` resolves exact case-preserving provider/model reviewer selectors against the final catalog in both retained sync and `src/codex/convergence.ts`. Valid per-model selection wins over valid provider-wide selection, then the root selector supplies fallback. Native root stamps retain the observed original value and applied selector bound to their slug; removal restores the original only while the applied value is unchanged. The native provenance remains after restoration so an equal provider reviewer cannot trigger legacy reclassification on the next sync. Ambiguous legacy unmarked catalogs retain their existing heuristic cleanup. Provider stamps do not change routing or credentials.
+Provider provenance is in [Native Catalog Aliases](catalog-native-aliases.md#provider-scoped-approval-reviewer).
 
 The [explicit model-capability contract](config.md#explicit-per-model-capability-declarations) preserves operator declarations through provider storage and catalog capture; it does not infer upstream capability or change this surface's routing behavior.
 

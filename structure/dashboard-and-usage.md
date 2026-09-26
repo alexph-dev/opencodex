@@ -480,8 +480,8 @@ its defaults and exclusions are owned by [Responses transport](transports/respon
 
 The provider editor field policy exposes `showThinkingSummary` as a boolean provider option; it controls Responses summary defaults without a dashboard rendering change. See [Google provider](providers/google.md).
 
-The same editor policy accepts the per-model `inlineThinkTagModels` string list. Its opt-in
-format contract is owned by [Chat compatibility](providers/chat-compat.md#inline-think-tag-recovery).
+The same editor policy accepts the per-model `inlineThinkTagModels` string list. Its format
+contract is owned by [Chat compatibility](providers/chat-compat.md#inline-think-tag-recovery).
 
 Paginated and migration-capable history follows the [authoritative writer contract](codex-home.md#paginated-history-writer-boundary); this document adds no independent writer guarantee.
 

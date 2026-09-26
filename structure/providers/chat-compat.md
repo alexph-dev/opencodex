@@ -51,16 +51,14 @@ Shared parsing and streaming follow the [request-copy](../transports/byte-accoun
 A gateway that serves a thinking model without a server-side reasoning parser returns the chain
 of thought inside `message.content` as `<think>` / `<thinking>` / `<reasoning>` blocks and sends
 neither `reasoning_content` nor `reasoning_details`. `src/adapters/openai-chat.ts` recovers those
-blocks into reasoning only for models listed in `inlineThinkTagModels`. An explicit operator list,
-including `[]`, replaces matching registry defaults. The option is off by default because registry
-providers share this adapter and a gateway that does parse reasoning
-must keep its visible content byte-exact. Once enabled the splitter still engages only for a
+blocks into reasoning by default. An explicit `inlineThinkTagModels` list narrows recovery to
+listed models, while `[]` disables it. The splitter engages only for a
 response that opens with a thinking tag (optionally preceded by whitespace), so ordinary prose or
 code fences before a tag leave the entire response untouched. Whitespace before that initial tag
 and after every closing tag remains answer text;
 after it engages it keeps splitting later blocks, because M-series models interleave thinking with
 answer segments, including same-line interleaving. Once engaged, tags are protocol delimiters even
-inside subsequent code fences or quoted examples: this explicit opt-in does not parse Markdown.
+inside subsequent code fences or quoted examples: this recovery does not parse Markdown.
 Gateways producing ambiguous literals should use structured reasoning instead. A moving cursor
 scans each upstream chunk without copying the remaining response after every block. Only undecided
 leading input or a trailing tag fragment is retained and charged to the translator budget.

@@ -13,7 +13,7 @@ function provider(optIn: boolean): OcxProviderConfig {
     adapter: "openai-chat",
     baseUrl: "https://example.test/v1",
     apiKey: "key",
-    ...(optIn ? { inlineThinkTagModels: [MODEL] } : {}),
+    inlineThinkTagModels: optIn ? [MODEL] : [],
   };
 }
 
@@ -127,7 +127,7 @@ describe("openai-chat inline <think> recovery", () => {
     expect(joined(events, "text_delta")).toBe("");
   });
 
-  test("without the opt-in the same stream stays byte-exact visible content", async () => {
+  test("an explicit empty model list keeps the stream byte-exact visible content", async () => {
     const events = await collect(adapterFor(false).parseStream(
       sse("<think>weighing it up</think>", "OCX_THINK_OK"),
     ));

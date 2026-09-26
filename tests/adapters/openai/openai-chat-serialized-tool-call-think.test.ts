@@ -19,7 +19,7 @@ function adapterFor(inlineThink: boolean) {
     adapter: "openai-chat",
     baseUrl: "https://gateway.example.test/v1",
     apiKey: "key",
-    ...(inlineThink ? { inlineThinkTagModels: [MODEL] } : {}),
+    inlineThinkTagModels: inlineThink ? [MODEL] : [],
   };
   const adapter = withTestTranslatorBudget(createOpenAIChatAdapter(provider));
   const parsed: OcxParsedRequest = {
@@ -97,7 +97,7 @@ describe("serialized tool-call reconciliation behind inline <think> splitting", 
     }
   });
 
-  test("without the inline-think opt-in a literal think tag stays answer text and the duplicate is still removed", async () => {
+  test("with inline-think explicitly disabled a literal think tag stays answer text and the duplicate is still removed", async () => {
     const lead = "<think>not parsed here</think>Running it.\n";
     for (const events of [await streamed(false, [lead, block(SCRIPT)], SCRIPT), await buffered(false, lead + block(SCRIPT), SCRIPT)]) {
       expect(joined(events, "reasoning_raw_delta")).toBe("");

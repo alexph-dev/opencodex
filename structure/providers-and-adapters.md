@@ -4,7 +4,7 @@ RunTurn hosted search uses `src/web-search/run-turn-loop.ts`: synthetic calls re
 
 Combo preflight allows the private search tool only while a search plan is active; client tool declaration checks and replay-unsafe heartbeat protection remain enforced.
 
-The opt-in `inlineThinkTagModels` list follows static-policy override and model-rename rules;
+The explicit `inlineThinkTagModels` list follows static-policy override and model-rename rules;
 shared Kiro/Chat splitting and raw display follow [Chat compatibility](providers/chat-compat.md#inline-think-tag-recovery).
 
 Meta Muse management login in `src/server/management/oauth-account-routes.ts` requires a

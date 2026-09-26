@@ -140,6 +140,15 @@
       ]
     },
     {
+      "path": "catalog-native-aliases.md",
+      "tier": 2,
+      "title": "Native Catalog Aliases and Reviewers",
+      "scope": "Additive native alias projection and provider-scoped reviewer provenance.",
+      "documents": [
+        "src/codex/"
+      ]
+    },
+    {
       "path": "subagents.md",
       "tier": 2,
       "title": "Subagents And Multi-Agent Surface",
@@ -170,6 +179,16 @@
       "documents": [
         "src/bridge.ts",
         "src/bridge/",
+        "src/responses/",
+        "src/server/"
+      ]
+    },
+    {
+      "path": "transports/astra-jev.md",
+      "tier": 3,
+      "title": "Astra-Jev Effort",
+      "scope": "Request-local adaptive effort, public context selection, evaluator and diagnostics.",
+      "documents": [
         "src/responses/",
         "src/server/"
       ]
